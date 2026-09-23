@@ -17,6 +17,34 @@ Haiku 4.5. Read the limitations below before using it for anything real.
 
 This is a community project. It is not an official Temporal or Anthropic integration.
 
+## At a glance
+
+```mermaid
+mindmap
+  root((temporal-claude-agent))
+    How it works
+      Claude pauses at every tool call
+      Each tool runs as a Temporal Activity
+      The next step gets the saved result
+    Safety
+      Finished steps never run again
+      A receipt number for every tool
+      Approvals through a validated Update
+      Refund limit checked in code
+    Tested
+      12 automated tests
+      3 crash tests kill the worker
+      Real Claude on 4 models
+      Bedrock mode with a stand-in model
+    Engine findings
+      6 quirks, each with a fix
+    Limitations
+      Depends on engine behavior
+      A new engine process per step
+      Only durable tools are durable
+      File session store is for development
+```
+
 ## How it works
 
 1. Durable tools are declared to Claude. A PreToolUse hook answers "defer", so Claude stops at each
@@ -26,8 +54,89 @@ This is a community project. It is not an official Temporal or Anthropic integra
 3. The next Claude step resumes the session from a session store and receives the saved result as
    a normal `tool_result`. Claude continues, and can pause again at the next tool.
 
+```mermaid
+flowchart TB
+    R(["Customer request"]) --> W
+    MG(["Manager<br/>approve or reject (Update + validator)"]) --> W
+    W["Temporal Workflow<br/>DurableClaudeAgent loop"]
+    W --- H[("Workflow history<br/>every finished step")]
+    W -->|"1. run a Claude step"| S["Claude step (Activity)<br/>Claude engine + Claude model"]
+    S -->|"2. Claude wants a tool:<br/>the hook says defer"| W
+    W -->|"3. run the tool"| T["Tool (Activity)<br/>ID: tool-{tool_use_id}"]
+    T -->|"4. result saved"| W
+    S <--> ST[("Session store<br/>the conversation")]
+    T -->|"receipt number"| X["Shop, bank, email"]
+```
+
 Why it is built this way (the engine behaviors we found, and the workaround for each):
 [`spike/FINDINGS.md`](spike/FINDINGS.md).
+
+## One refund, step by step
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Customer
+    participant WF as Temporal Workflow
+    participant CL as Claude step (Activity)
+    participant TO as Tool Activities
+    actor MG as Manager
+    Customer->>WF: "Order A-1001 arrived broken"
+    WF->>CL: Claude step 1
+    Note over CL: The engine asks the model. When Claude calls a tool,<br/>a PreToolUse hook answers "defer", so the engine never runs it.
+    CL-->>WF: pause: wants look_up_order
+    WF->>TO: look_up_order
+    TO-->>WF: 49.99 EUR, saved in history
+    WF->>CL: Claude step 2 + saved result
+    CL-->>WF: pause: wants issue_refund
+    Note over WF,MG: issue_refund needs approval. The workflow waits, minutes or days.
+    MG->>WF: approve (Update, the validator checks the approver)
+    WF->>TO: issue_refund, receipt number = Activity ID
+    TO-->>WF: refunded once
+    WF->>CL: Claude step 3 + saved result
+    CL-->>WF: pause: wants email_customer
+    WF->>TO: email_customer
+    TO-->>WF: sent
+    WF->>CL: Claude step 4 + saved result
+    CL-->>WF: final answer
+    WF-->>Customer: "Refunded 49.99 EUR and emailed you"
+```
+
+4 Claude steps, 3 tool Activities, 1 human approval. Every step lands in Temporal's history.
+
+## What if the machine dies?
+
+```mermaid
+flowchart TD
+    K{{"The worker dies..."}}
+    K --> A["...during a Claude step"]
+    K --> B["...right after a tool finished"]
+    K --> C["...after the money moved,<br/>before the reply"]
+    K --> D["...while waiting for approval"]
+    A --> A2["The heartbeat stops. Temporal retries<br/>the step on another worker, which resumes<br/>the conversation from the session store."]
+    B --> B2["The result is already in the<br/>workflow history. It never runs again."]
+    C --> C2["Temporal retries the tool. Same receipt<br/>number, so the bank says: already done."]
+    D --> D2["Nothing is running.<br/>The wait lives in Temporal."]
+    A2 --> OK(["The agent carries on.<br/>Every finished step ran once."])
+    B2 --> OK
+    C2 --> OK
+    D2 --> OK
+```
+
+The first three are tested by killing the worker with SIGKILL:
+`test_crash_in_the_middle_of_a_claude_segment`, `test_crash_right_after_refund_is_recorded` and
+`test_crash_after_money_moved_but_before_the_reply`. The approval wait is Temporal's own design:
+nothing runs while it waits.
+
+## See it interactively
+
+<p>
+  <a href="https://osamastro7-droid.github.io/temporal-claude-agent/map/"><img src="docs/images/map-overview.png" alt="The stage-by-stage map: 9 stages of a refund, six lanes, and Temporal's notebook" width="49%"></a>
+  <a href="https://osamastro7-droid.github.io/temporal-claude-agent/map/"><img src="docs/images/map-crash.png" alt="Stage 7 with the plug pulled: the worker is off, the notebook survives, the refund happened once" width="49%"></a>
+</p>
+
+Open the [interactive map](https://osamastro7-droid.github.io/temporal-claude-agent/map/): step through a refund in 9 stages, then pull the plug at any
+of them and see how the agent recovers.
 
 ## Quick look
 
