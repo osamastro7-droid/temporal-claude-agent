@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>How a durable Claude agent works on Temporal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F4F6F9; --grid: #E3E8EF; --ink: #18202C; --muted: #566273; --panel: #FFFFFF; --line: #D5DCE5;
+    --people: #A9780F; --temporal: #3446B0; --worker: #257178; --engine: #7A3F92; --model: #A8426A; --world: #347A4A;
+    --crash: #C73A1F; --crash-soft: #FBE6E1; --ok-soft: #E4F2E8;
+    --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #10141B; --grid: #1A212C; --ink: #E7EBF1; --muted: #9AA6B6; --panel: #161C26; --line: #283243;
+      --people: #E0B24A; --temporal: #8392F2; --worker: #5FB8BE; --engine: #C08AD6; --model: #E487A8; --world: #74C28C;
+      --crash: #FF7A5C; --crash-soft: #3A1E19; --ok-soft: #17301F;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #10141B; --grid: #1A212C; --ink: #E7EBF1; --muted: #9AA6B6; --panel: #161C26; --line: #283243;
+    --people: #E0B24A; --temporal: #8392F2; --worker: #5FB8BE; --engine: #C08AD6; --model: #E487A8; --world: #74C28C;
+    --crash: #FF7A5C; --crash-soft: #3A1E19; --ok-soft: #17301F;
+    color-scheme: dark;
+  }
+  :root { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  *, *::before, *::after { box-sizing: inherit; }
+  body {
+    margin: 0; font-family: var(--sans); color: var(--ink); background-color: var(--paper);
+    background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 28px 28px; line-height: 1.5; font-size: 16px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 20px 72px; }
+  h1 { font-size: clamp(2.1rem, 5vw, 3.6rem); line-height: 1.02; letter-spacing: -0.035em; margin: 0 0 14px; font-weight: 700; max-width: 16ch; }
+  h2 { font-size: 1.5rem; letter-spacing: -0.02em; margin: 0 0 6px; }
+  p { margin: 0; }
+  .lede { font-size: 1.15rem; color: var(--muted); max-width: 62ch; }
+  .models { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .models em { font-style: normal; color: var(--muted); align-self: center; margin-right: 4px; }
+  .models span { border: 1.5px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 12px; font-size: .9rem; }
+
+  /* stage rail */
+  .rail { margin: 36px 0 18px; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px; }
+  .stage-btn {
+    font: inherit; text-align: left; cursor: pointer; color: var(--ink); background: var(--panel);
+    border: 1.5px solid var(--line); border-radius: 10px; padding: 8px 10px; min-height: 64px;
+  }
+  .stage-btn b { display: block; font-family: var(--mono); font-size: .8rem; color: var(--muted); }
+  .stage-btn span { display: block; font-size: .85rem; line-height: 1.25; }
+  .stage-btn[aria-current="step"] { border-color: var(--temporal); box-shadow: inset 0 0 0 1.5px var(--temporal); }
+  .stage-btn[aria-current="step"] b { color: var(--temporal); }
+  .stage-btn.done b::after { content: " done"; }
+  button:focus-visible { outline: 3px solid var(--temporal); outline-offset: 2px; }
+
+  /* main board */
+  .board { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; }
+  .stage { background: var(--panel); border: 1.5px solid var(--line); border-radius: 16px; padding: 22px; }
+  .stage-head { display: flex; justify-content: space-between; gap: 16px; align-items: start; flex-wrap: wrap; }
+  .stage-head p { color: var(--muted); max-width: 60ch; margin-top: 4px; }
+  .nav { display: flex; gap: 8px; }
+  .nav button, .plug {
+    font: inherit; font-weight: 600; cursor: pointer; border-radius: 10px; padding: 9px 14px; border: 1.5px solid var(--line);
+    background: var(--paper); color: var(--ink);
+  }
+  .nav button:disabled { opacity: .4; cursor: default; }
+  .lanes { margin-top: 18px; display: grid; gap: 8px; }
+  .lane { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 12px; align-items: stretch; transition: opacity .25s; }
+  .who { border-left: 5px solid var(--c); padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--c) 9%, transparent); }
+  .who strong { display: block; font-size: .95rem; }
+  .who small { color: var(--muted); font-size: .8rem; }
+  .what { padding: 9px 12px; border-radius: 8px; border: 1.5px dashed var(--line); color: var(--muted); font-size: .98rem; }
+  .lane.on .what { border-style: solid; border-color: color-mix(in srgb, var(--c) 55%, var(--line)); color: var(--ink); background: color-mix(in srgb, var(--c) 6%, var(--panel)); }
+  .lane.off .who { opacity: .35; }
+  .lane.off .what { border: 1.5px solid var(--crash); color: color-mix(in srgb, var(--muted) 55%, transparent);
+    background: repeating-linear-gradient(-45deg, transparent 0 8px, color-mix(in srgb, var(--crash) 9%, transparent) 8px 16px); }
+  .lane.off .what::after { content: "This machine is off"; display: block; margin-top: 4px; font-weight: 700; color: var(--crash); }
+
+  .crashbox { margin-top: 18px; border-radius: 12px; padding: 14px 16px; background: var(--paper); border: 1.5px solid var(--line); }
+  .plug { border-color: var(--crash); color: var(--crash); background: transparent; }
+  .plug[aria-pressed="true"] { background: var(--crash); color: var(--panel); }
+  .crashtext { display: none; margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--crash-soft); }
+  .crashing .crashtext { display: block; }
+  .proof { margin-top: 10px; font-size: .9rem; color: var(--muted); }
+  .proof code { font-family: var(--mono); font-size: .82rem; background: var(--ok-soft); color: var(--ink); padding: 1px 6px; border-radius: 5px; }
+
+  /* the notebook */
+  .notebook { position: sticky; top: calc(12px + env(safe-area-inset-top, 0px)); background: var(--panel); border: 1.5px solid var(--temporal); border-radius: 16px; padding: 18px; }
+  .notebook h3 { margin: 0; font-size: 1.05rem; color: var(--temporal); }
+  .notebook > p { color: var(--muted); font-size: .88rem; margin-top: 2px; }
+  .safe { display: none; margin-top: 10px; font-weight: 600; font-size: .9rem; color: var(--temporal); }
+  .crashing-note .safe { display: block; }
+  ol.events { list-style: none; margin: 14px 0 0; padding: 0; font-family: var(--mono); font-size: .8rem; counter-reset: ev; max-height: 460px; overflow-y: auto; }
+  ol.events li { counter-increment: ev; display: grid; grid-template-columns: 2.2em 1fr; gap: 6px; padding: 7px 0; border-top: 1px solid var(--line); }
+  ol.events li::before { content: counter(ev); color: var(--muted); text-align: right; }
+  ol.events li.new { color: var(--temporal); font-weight: 600; animation: write .45s ease-out; }
+  @keyframes write { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+
+  /* lower sections */
+  section.more { margin-top: 56px; }
+  section.more > p { color: var(--muted); max-width: 64ch; }
+  .cases { margin-top: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 28px; }
+  .cases div { border-top: 3px solid var(--c); padding-top: 10px; }
+  .cases h4 { margin: 0 0 4px; font-size: 1.05rem; }
+  .cases p { color: var(--muted); }
+  .fixes { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .fixes li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+  .fixes li p:first-child::before { content: "Found: "; font-weight: 700; color: var(--crash); }
+  .fixes li p:last-child::before { content: "Our fix: "; font-weight: 700; color: var(--world); }
+  .tablewrap { overflow-x: auto; margin-top: 18px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: .95rem; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--muted); }
+  td.pass { color: var(--world); font-weight: 600; }
+  .foot { margin-top: 10px; color: var(--muted); font-size: .88rem; }
+  footer { margin-top: 56px; color: var(--muted); font-size: .9rem; }
+  .top { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+  .theme { font: inherit; font-size: .85rem; cursor: pointer; border: 1.5px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 4px 12px; }
+
+  @media (max-width: 960px) {
+    .board { grid-template-columns: minmax(0, 1fr); }
+    .notebook { position: static; }
+    .rail { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 620px) {
+    .lane { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .cases, .fixes li { grid-template-columns: minmax(0, 1fr); }
+    .wrap { padding-top: 24px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    ol.events li.new { animation: none; }
+    .lane { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><button class="theme" id="theme" type="button">Switch theme</button></div>
+  <h1>The refund that can't happen twice</h1>
+  <p class="lede">A stage-by-stage map of a Claude agent running on Temporal: who does what at every step, and what happens if the machine dies right there. Step through it, then pull the plug.</p>
+  <div class="models" aria-label="Tested with real Claude">
+    <em>Tested with real Claude</em><span>Haiku 4.5</span><span>Sonnet 5</span><span>Opus 5.5</span><span>Fable 5.1</span>
+  </div>
+
+  <nav class="rail" id="rail" aria-label="Stages"></nav>
+
+  <div class="board">
+    <article class="stage" id="stage" aria-live="polite">
+      <div class="stage-head">
+        <div><h2 id="stage-title"></h2><p id="stage-summary"></p></div>
+        <div class="nav">
+          <button type="button" id="prev">Previous step</button>
+          <button type="button" id="next">Next step</button>
+        </div>
+      </div>
+      <div class="lanes" id="lanes"></div>
+      <div class="crashbox" id="crashbox">
+        <button type="button" class="plug" id="plug" aria-pressed="false">Pull the plug here</button>
+        <div class="crashtext"><strong>What happens:</strong> <span id="crash-text"></span></div>
+        <p class="proof" id="proof"></p>
+      </div>
+    </article>
+
+    <aside class="notebook" id="notebook" aria-label="Temporal's notebook">
+      <h3>Temporal's notebook</h3>
+      <p>The workflow history. Every finished step is written here and survives any crash.</p>
+      <p class="safe">Still here after the crash. A new machine reads it and carries on.</p>
+      <ol class="events" id="events"></ol>
+    </aside>
+  </div>
+
+  <section class="more">
+    <h2>Special cases</h2>
+    <p>Real agents don't always follow the happy path. Each of these is a test that runs on every Claude model.</p>
+    <div class="cases">
+      <div style="--c: var(--model)"><h4>Claude asks for two tools at once</h4><p>The engine can only pause one call. The first pauses; the second gets "one at a time, ask again after this result". Claude asks again in the next step, so nothing is lost.</p></div>
+      <div style="--c: var(--world)"><h4>A tool fails</h4><p>An unknown order makes the lookup fail. The error goes back to Claude as the tool result, so Claude explains instead of guessing. No refund is made.</p></div>
+      <div style="--c: var(--people)"><h4>The manager says no</h4><p>Claude is told the refund was rejected. It does not try again, and no money moves.</p></div>
+      <div style="--c: var(--temporal)"><h4>The manager answers in two days</h4><p>The wait lives in Temporal, not in a running program. Machines can restart or be replaced while it waits.</p></div>
+    </div>
+  </section>
+
+  <section class="more">
+    <h2>What we found inside the engine</h2>
+    <p>The Claude engine is closed source, so we tested it until it broke, then worked around each problem. None of these were documented.</p>
+    <ul class="fixes">
+      <li><p>After one pause, the engine ignored the next pause request.</p><p>Hand the saved result back as a normal message. Our hook always says pause.</p></li>
+      <li><p>Rewinding a conversation after a crash broke the paused state.</p><p>A plain resume after a crash, which works even on a different machine.</p></li>
+      <li><p>With two tools asked at once, the engine kept one and silently dropped the other.</p><p>The first pauses; the second is told to wait and is asked for again.</p></li>
+      <li><p>On every resume, the engine announces the call we just answered again.</p><p>We recognize the repeat and ignore it.</p></li>
+      <li><p>A Claude app login cannot renew itself when a paused session resumes.</p><p>A long-lived login token, an API key, or Amazon Bedrock.</p></li>
+      <li><p>Opus 5.5 needs a newer engine than the one inside the SDK.</p><p>Point the package at Claude Code 2.1.280 with one setting.</p></li>
+    </ul>
+  </section>
+
+  <section class="more">
+    <h2>Proven with real Claude</h2>
+    <p>Eight scenarios, run twice on each model through a Claude Max subscription. The same eight also pass through Amazon Bedrock with a stand-in model.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Scenario</th><th>Haiku 4.5</th><th>Sonnet 5</th><th>Opus 5.5</th><th>Fable 5.1</th></tr></thead>
+        <tbody id="results"></tbody>
+      </table>
+    </div>
+    <p class="foot">Opus 5.5 ran on Claude Code 2.1.280. Haiku 4.5: every run shown on screen passed; the exact count is in the report card. Also: 10 automated tests, 3 of them kill the worker process on purpose.</p>
+  </section>
+
+  <footer>temporal-claude-agent, built in Python by Osamah Al-Harazi. Every durable tool call is a Temporal Activity.</footer>
+</div>
+
+<script>
+const ACTORS = [
+  { id: "people", name: "Customer and manager", note: "the humans" },
+  { id: "temporal", name: "Temporal", note: "the notebook" },
+  { id: "worker", name: "Worker", note: "your machine" },
+  { id: "engine", name: "Claude engine", note: "runs on the worker" },
+  { id: "model", name: "Claude model", note: "Haiku, Sonnet, Opus, Fable" },
+  { id: "world", name: "Shop and bank", note: "the outside world" },
+];
+const MACHINE = ["worker", "engine"];
+
+const STAGES = [
+  { short: "Request comes in", title: "A request comes in",
+    summary: "A customer writes in. Temporal starts a workflow for it before anything else happens.",
+    lanes: { people: "\"Order A-1001 arrived broken, I want my money back.\"",
+             temporal: "Starts the refund workflow and writes the request down." },
+    events: ["Workflow started: refund request for A-1001"],
+    crash: "Nothing is lost. The request is already in the notebook, so any worker picks it up.",
+    proof: [] },
+  { short: "Claude reads it", title: "Claude reads the request",
+    summary: "Each thinking step of Claude is one Temporal Activity, run by a worker.",
+    lanes: { temporal: "Asks a worker to run Claude step 1.",
+             worker: "Starts the Claude engine with the request and the list of tools.",
+             engine: "Sends the conversation to the model.",
+             model: "Decides it first needs to look up the order." },
+    events: ["Claude step 1 started"],
+    crash: "The worker stops sending its heartbeat. A few seconds later Temporal hands this step to another worker, which resumes the conversation from the session store. No tool has run yet, so nothing can happen twice.",
+    proof: ["crash_mid_answer", "fresh_machine"] },
+  { short: "Claude pauses", title: "Claude pauses at the tool",
+    summary: "The key trick: tools never run inside the Claude engine.",
+    lanes: { model: "Asks for look_up_order(A-1001).",
+             engine: "Asks our hook: may I run it? The hook answers: pause. The engine stops and hands the call back.",
+             worker: "Returns the paused call (its id, name and input) to Temporal.",
+             temporal: "Writes down: Claude wants look_up_order." },
+    events: ["Claude step 1 done: wants look_up_order"],
+    crash: "If the paused call never reached the notebook, the step simply runs again and Claude asks again. Nothing was done yet.",
+    proof: ["pause_resume"] },
+  { short: "Temporal runs it", title: "Temporal runs the tool",
+    summary: "The tool is its own Activity with a fixed ID, so it can be retried but never repeated once it finished.",
+    lanes: { temporal: "Schedules look_up_order as its own Activity.",
+             worker: "Calls the shop.",
+             world: "Answers: ceramic teapot, 49.99 EUR, maria@example.com." },
+    events: ["look_up_order done: 49.99 EUR, maria@example.com"],
+    crash: "If the result was saved, it is never fetched again. If the worker died before saving it, Temporal retries the lookup.",
+    proof: [] },
+  { short: "Claude continues", title: "Claude continues, then pauses again",
+    summary: "The conversation resumes from the session store, even on a different machine.",
+    lanes: { worker: "Resumes the session and hands Claude the saved result as a normal tool result.",
+             engine: "Claude asks for the refund. Our hook says pause again.",
+             model: "Reads the order and asks for issue_refund(A-1001, 49.99).",
+             temporal: "Writes down: Claude wants issue_refund." },
+    events: ["Claude step 2 done: wants issue_refund"],
+    crash: "The retry resumes the same conversation. If the saved result is already in it, it is not sent twice.",
+    proof: ["crash_mid_answer"] },
+  { short: "Manager approves", title: "A manager approves",
+    summary: "Risky tools wait for a human. The wait can last minutes or days.",
+    lanes: { temporal: "Sees that issue_refund needs approval, and waits. No machine has to stay on.",
+             people: "The manager approves (a Temporal signal). A rejection would go back to Claude instead." },
+    events: ["Waiting for approval: issue_refund 49.99 EUR", "Approved by the manager"],
+    crash: "Nothing is running while it waits. Restart every machine and the wait is still there, exactly as it was.",
+    proof: ["refund_approved", "refund_rejected"] },
+  { short: "Refund, once", title: "The refund happens exactly once",
+    summary: "Temporal never repeats a finished step, and the bank gets a receipt number.",
+    lanes: { temporal: "Runs issue_refund as its own Activity with a fixed ID.",
+             worker: "Calls the bank and passes that ID as the receipt number.",
+             world: "Refunds 49.99 EUR. The same receipt number again gets \"already done\"." },
+    events: ["issue_refund done: 49.99 EUR refunded"],
+    crash: "Killed right after the refund was saved: it never runs again. Killed after the money moved but before the reply: Temporal retries, the bank sees the same receipt number, and there is still one refund. Our tests do both.",
+    proof: ["crash_after_refund", "test_crash_after_money_moved_but_before_the_reply"] },
+  { short: "Email, answer", title: "The email, then the final answer",
+    summary: "The same loop again: Claude asks, Temporal does, Claude continues.",
+    lanes: { model: "Asks for email_customer, then writes the summary.",
+             engine: "Pauses at the email call, like every tool call.",
+             temporal: "Sends the email once as its own Activity, then runs Claude step 4.",
+             world: "The customer receives the email." },
+    events: ["Claude step 3 done: wants email_customer", "email_customer done", "Claude step 4 done: final answer"],
+    crash: "The same rules as before: finished steps never run again, and a half-finished step is retried safely.",
+    proof: [] },
+  { short: "Done", title: "Done, with a full record",
+    summary: "The workflow finishes. The notebook is the complete story of what happened.",
+    lanes: { temporal: "Completes the workflow: 4 Claude steps, each tool exactly once, and the cost.",
+             people: "\"Done. Refunded 49.99 EUR for order A-1001 and emailed the customer.\"" },
+    events: ["Workflow completed"],
+    crash: "There is nothing left to lose. The record stays in Temporal.",
+    proof: ["parallel_lookups", "unknown_order"] },
+];
+
+const SCENARIOS = [
+  ["pause_resume", "Claude pauses at a tool and continues with our result"],
+  ["fresh_machine", "The next step runs on a brand new machine"],
+  ["crash_mid_answer", "The engine is killed mid-step, then retried"],
+  ["refund_approved", "Approve: refund once, email once"],
+  ["refund_rejected", "Reject: no money moves"],
+  ["crash_after_refund", "Worker killed right after the refund"],
+  ["parallel_lookups", "Two lookups asked at once"],
+  ["unknown_order", "A tool error goes back to Claude"],
+];
+
+let current = 0;
+let crashing = false;
+const $ = (id) => document.getElementById(id);
+
+function renderRail() {
+  $("rail").innerHTML = STAGES.map((s, i) =>
+    `<button type="button" class="stage-btn${i < current ? " done" : ""}" data-i="${i}" ${i === current ? 'aria-current="step"' : ""}>` +
+    `<b>${i + 1}</b><span>${s.short}</span></button>`).join("");
+  $("rail").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => go(+b.dataset.i)));
+}
+
+function renderStage() {
+  const s = STAGES[current];
+  $("stage-title").textContent = `${current + 1}. ${s.title}`;
+  $("stage-summary").textContent = s.summary;
+  $("lanes").innerHTML = ACTORS.map((a) => {
+    const text = s.lanes[a.id];
+    const off = crashing && MACHINE.includes(a.id);
+    const cls = off ? "lane off" : text ? "lane on" : "lane";
+    return `<div class="${cls}" style="--c: var(--${a.id})"><div class="who"><strong>${a.name}</strong><small>${a.note}</small></div>` +
+      `<div class="what">${text || "Idle"}</div></div>`;
+  }).join("");
+  $("crash-text").textContent = s.crash;
+  $("proof").innerHTML = s.proof.length ? `Proven by: ${s.proof.map((p) => `<code>${p}</code>`).join(" ")}` : "";
+  $("crashbox").classList.toggle("crashing", crashing);
+  $("notebook").classList.toggle("crashing-note", crashing);
+  $("plug").setAttribute("aria-pressed", String(crashing));
+  $("plug").textContent = crashing ? "Turn the machine back on" : "Pull the plug here";
+  $("prev").disabled = current === 0;
+  $("next").disabled = current === STAGES.length - 1;
+}
+
+function renderNotebook(animate) {
+  const lines = [];
+  STAGES.forEach((s, i) => { if (i <= current) s.events.forEach((e) => lines.push({ e, fresh: i === current })); });
+  $("events").innerHTML = lines.map((l) => `<li class="${l.fresh && animate ? "new" : ""}">${l.e}</li>`).join("");
+  const list = $("events");
+  list.scrollTop = list.scrollHeight;
+}
+
+function go(i) {
+  if (i < 0 || i >= STAGES.length) return;
+  const forward = i > current;
+  current = i;
+  crashing = false;
+  renderRail(); renderStage(); renderNotebook(forward);
+}
+
+function renderResults() {
+  $("results").innerHTML = SCENARIOS.map(([id, label]) =>
+    `<tr><td><strong>${label}</strong><br><small style="color:var(--muted)">${id}</small></td>` +
+    `<td class="pass">passed</td><td class="pass">2 of 2</td><td class="pass">2 of 2</td><td class="pass">2 of 2</td></tr>`).join("");
+}
+
+$("prev").addEventListener("click", () => go(current - 1));
+$("next").addEventListener("click", () => go(current + 1));
+$("plug").addEventListener("click", () => { crashing = !crashing; renderStage(); });
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest && e.target.closest("input, textarea")) return;
+  if (e.key === "ArrowRight") go(current + 1);
+  if (e.key === "ArrowLeft") go(current - 1);
+});
+$("theme").addEventListener("click", () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+});
+
+renderRail(); renderStage(); renderNotebook(false); renderResults();
+</script>
+</body>
+</html>
