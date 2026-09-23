@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.engine/
+.shop/
+.fake_claude/
+.sessions/
+out/
+spike/REAL_REPORT*.md
+spike/real_results.json

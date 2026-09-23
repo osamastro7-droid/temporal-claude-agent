@@ -1,0 +1,23 @@
+[project]
+name = "temporal-claude-agent"
+version = "0.1.0"
+description = "Durable Claude Agent SDK agents on Temporal: every tool call is a Temporal Activity, crashes resume, humans can approve."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["temporalio>=1.33.0"]
+
+[project.optional-dependencies]
+claude = ["claude-agent-sdk>=0.2.150"]
+dev = ["pytest", "pytest-asyncio", "claude-agent-sdk>=0.2.150"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/temporal_claude_agent"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
