@@ -10,6 +10,7 @@
 //   #cv            the canvas (aria-hidden)        #hotspots   absolutely positioned hotspot layer over it
 //   #nameform      form: #name-input, #name-remember, #name-start, #name-why (reason), #name-privacy
 //   #controls      #btn-action + #btn-alt (Reject next to Approve) + #why-action (reason or note; aria-live),
+//                  #ready-sr (visually hidden, aria-live: "<action> is ready." when an action becomes live),
 //                  #btn-plug + #why-plug, #ctl-if (the panel's "If you pull the plug now" + outcome, repeated under
 //                  the plug for the narrow layout; aria-hidden)
 //   #toggles       outside #controls so it shows on every scene: #btn-pause, #btn-sound, #btn-step,
@@ -37,14 +38,23 @@ window.UI = (() => {
   let act = () => {}, cv = null, pointer = null, last = {}, lastGroup = null, lastFocus = null, check = () => {};
   /** Single-key shortcuts (P, A, R) on or off (#btn-keys, WCAG 2.1.4). Space and Enter are not affected. */
   let keysOn = true;
-  /** Focus that ui.js itself moved right after a POINTER action (a mouse click on Start, the plug, a toggle
-   *  or a rail chip) lands on #btn-action without a visible ring. The player did not choose it, so Space on
-   *  it pauses, as the legend says, instead of pressing the button (Enter still presses the live action,
-   *  which in step mode is 'next'). Keyboard-moved focus,
-   *  or any later focus change (Tab), clears it. :focus-visible cannot tell: Chromium reports it true
-   *  inside a capture keydown listener. */
+  /** Focus that ui.js itself moved to #btn-action right after a POINTER action (a mouse click on Start, the
+   *  plug, a toggle or a rail chip) shows no ring. The player did not choose it, so Space on it pauses, as the
+   *  legend says, instead of pressing the button; and Enter on it, while it holds a decision (Approve / Reject),
+   *  is 'next' (the legend's Enter), never an unseen approval. Enter on a quiet Buy / Pay / Submit / Next still
+   *  presses it. Only #btn-action is ever quiet (the end card's "Play again" keeps its own Space and Enter).
+   *  Keyboard-moved focus, or any later focus change (Tab), clears it. :focus-visible cannot tell: Chromium
+   *  reports it true inside a capture keydown listener. */
   let viaPointer = false, quietEl = null;
-  const moveFocus = el => { if (document.activeElement === el) return; el.focus({ preventScroll: true }); quietEl = viaPointer ? el : null; };
+  const moveFocus = el => { if (document.activeElement === el) return; el.focus({ preventScroll: true }); quietEl = viaPointer && el.id === 'btn-action' ? el : null; };
+  /** The game is on screen: at least a fifth of the canvas is in the viewport (the canvas, not the whole #game
+   *  section: at 1440 the panel beside it reaches far below the fold). While the reader is elsewhere, the loose
+   *  keys (focus on <body> or outside #game) do nothing, so Space scrolls the page as usual. Measured at the
+   *  keydown (one rect read), so it is right even just after a scroll. */
+  const gameSeen = () => { const r = cv.getBoundingClientRect(), vh = window.innerHeight || document.documentElement.clientHeight;
+    return r.height > 0 && (Math.min(r.bottom, vh) - Math.max(r.top, 0)) >= r.height / 5; };
+  /** The label of the live action last announced in #ready-sr ('' = none live). */
+  let readyLabel = '';
   const T = () => CONTENT.html;
   /** set textContent only when it changed (UI.sync runs every frame) */
   const text = (el, s) => { if (el && el.textContent !== s) el.textContent = s; };
@@ -73,7 +83,11 @@ window.UI = (() => {
     if (U.toggles) attr($('toggles'), 'aria-label', U.toggles);
     text($('btn-pause'), B.pause); text($('btn-sound'), B.sound); text($('btn-step'), B.stepMode); text($('btn-reduced'), U.reduced ?? ''); text($('btn-keys'), U.keysToggle ?? '');
     text($('keys-label'), U.keysLabel ?? '');
-    $('keys').replaceChildren(...(U.keys ?? []).flatMap(([k, what]) => { const dt = document.createElement('dt'), dd = document.createElement('dd'), kb = document.createElement('kbd'); kb.textContent = k; dt.append(kb); dd.textContent = what; return [dt, dd]; }));
+    // a single-letter key (P, A, R) is a shortcut #btn-keys turns off: its row is marked (map.css .off) and gets
+    // CONTENT.html.ui.keysOff after its words while the shortcuts are off (keysLegend)
+    $('keys').replaceChildren(...(U.keys ?? []).flatMap(([k, what]) => { const dt = document.createElement('dt'), dd = document.createElement('dd'), kb = document.createElement('kbd'), w = document.createElement('span'), o = document.createElement('span');
+      kb.textContent = k; dt.append(kb); w.textContent = what; o.className = 'key-off'; dd.append(w, o);
+      if (/^[a-z]$/i.test(k)) { dt.dataset.letter = dd.dataset.letter = k; } return [dt, dd]; }));
     text($('btn-again'), B.playAgain); text($('btn-rename'), B.changeName); text($('btn-break'), B.tryBreak);
     // After a MOUSE click (detail > 0) on the plug or a toggle, the focus goes back to the action button, so
     // Enter / Space / the letters then do what the legend says instead of pressing that button again.
@@ -83,7 +97,7 @@ window.UI = (() => {
     const toggle = (id, a) => $(id).addEventListener('click', e => { act(a); refocus(e); });
     toggle('btn-pause', 'pause'); toggle('btn-sound', 'sound'); toggle('btn-step', 'step');
     toggle('btn-reduced', 'reduced');                                     // runtime toggles G.settings.reduced
-    $('btn-keys').addEventListener('click', e => { keysOn = !keysOn; pressed($('btn-keys'), keysOn); refocus(e); });
+    $('btn-keys').addEventListener('click', e => { keysOn = !keysOn; pressed($('btn-keys'), keysOn); keysLegend(); refocus(e); });
     $('btn-again').addEventListener('click', () => act('again'));
     $('btn-rename').addEventListener('click', () => act('rename'));
     $('btn-break').addEventListener('click', () => act('break'));
@@ -98,8 +112,9 @@ window.UI = (() => {
     // keys (GAME_SPEC §2): letters are ignored while a text field has focus, and while #btn-keys is off;
     // Space and Enter are left to any focused control (a button, the checkbox, a link) so they keep their
     // own meaning, except Space on a control-bar button that does nothing right now (aria-disabled): that
-    // one pauses, as the legend says (the focus rests on #btn-action while the beats play), and Space /
-    // Enter on focus that ui.js moved after a pointer action (quietEl, see moveFocus).
+    // one pauses, as the legend says (the focus rests on #btn-action while the beats play), and Space (and
+    // Enter on Approve / Reject) on focus that ui.js moved after a pointer action (quietEl, see moveFocus).
+    // Nothing acts while the game is off screen and the focus is outside it (gameSeen).
     let spaceUp = false;
     document.addEventListener('pointerdown', () => { viaPointer = true; }, true);
     document.addEventListener('keydown', () => { viaPointer = false; }, true);
@@ -108,18 +123,22 @@ window.UI = (() => {
       const t = e.target instanceof Element ? e.target : null, tag = t ? t.tagName : '';
       const textEntry = !!t && (t.isContentEditable || tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !/^(checkbox|radio|button|submit|reset)$/i.test(t.type)));
       if (textEntry) return;
+      // reading below the game (it is off screen, the focus is not in it): Space scrolls, the keys do nothing
+      if (!(t && $('game').contains(t)) && !gameSeen()) return;
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
       if (!keysOn && /^[a-z]$/.test(k)) return;                          // single-key shortcuts turned off
       const idle = !!t && tag === 'BUTTON' && isOff(t) && !!t.closest('#controls');
-      // quiet focus changes Space only: Enter still presses the live action (in step mode that action is 'next')
-      const quiet = !!t && t === quietEl && k === ' ';
+      // quiet focus (see moveFocus): Space pauses; Enter is 'next' on a decision (Approve / Reject: act('next')
+      // does nothing at the approval hold), and still presses a quiet Buy / Pay / Submit / Next
+      const decides = !!t && /^(approve|reject)$/.test(t.dataset.act || '');
+      const quiet = !!t && t === quietEl && (k === ' ' || (k === 'Enter' && decides));
       const control = !idle && !quiet && !!t && (/^(INPUT|BUTTON|A|SELECT|TEXTAREA|SUMMARY)$/.test(tag) || t.hasAttribute('tabindex'));
       if (e.repeat && k !== ' ') { if (k === 'p' || k === 'Enter' && !control) e.preventDefault(); return; }   // a held key acts once
       if (k === 'p') { const b = $('btn-plug'); if (!b.closest('[hidden]') && !isOff(b)) act(b.dataset.act || 'plug'); e.preventDefault(); }
       else if (k === 'a') act('approve');
       else if (k === 'r') act('reject');
       else if (k === ' ' && !control) { e.preventDefault(); if (!e.repeat) act('pause'); spaceUp = idle || quiet; }
-      else if (k === 'Enter' && !control) { if (idle) e.preventDefault(); act('next'); }
+      else if (k === 'Enter' && !control) { if (idle || quiet) e.preventDefault(); act('next'); }
     });
     // a button activates on Space's keyup: swallow the keyup of a Space that paused
     document.addEventListener('keyup', e => { if (e.key === ' ' && spaceUp) { spaceUp = false; e.preventDefault(); } });
@@ -182,6 +201,9 @@ window.UI = (() => {
     text(ba, B[a.label] ?? a.label); off(ba, !a.enabled); ba.dataset.act = a.act ?? '';
     alt.hidden = !a.alt; if (a.alt) { text(alt, B[a.alt.label] ?? a.alt.label); off(alt, !a.alt.enabled); alt.dataset.act = a.alt.act; } else alt.dataset.act = '';
     text($('why-action'), a.enabled ? (a.note ? D[a.note] ?? '' : '') : D[a.reason] ?? '');
+    // screen readers: say once that an action can now be pressed (the button's name changes silently)
+    const live = a.enabled && !start && !end ? (B[a.label] ?? a.label ?? '') : '';
+    if (live !== readyLabel) { readyLabel = live; text($('ready-sr'), live ? (D.ready ?? '{label}').replace('{label}', live) : ''); }
     const dark = G.worker.phase === 'dark', bp = $('btn-plug');
     // pressed = the plug is out (not while he wakes)
     text(bp, dark ? B.unplug : B.plug); pressed(bp, ['pulling', 'dark', 'pushing'].includes(G.worker.phase)); bp.dataset.act = dark ? 'unplug' : 'plug';
@@ -225,13 +247,23 @@ window.UI = (() => {
       else if (li.classList.contains('wait')) { li.classList.remove('wait'); li.removeAttribute('data-note'); }
     }
   }
+  /** Mark the single-letter rows of the keyboard legend while #btn-keys is off (class 'off' + CONTENT.html.ui.keysOff). */
+  function keysLegend() {
+    const word = (T().ui ?? {}).keysOff ?? '';
+    for (const el of $('keys').querySelectorAll('[data-letter]')) {
+      el.classList.toggle('off', !keysOn);
+      if (el.tagName === 'DD') text(el.querySelector('.key-off'), keysOn || !word ? '' : ' ' + word);
+    }
+  }
   function rail(G, crashes, start) {
     const R = T().rail;
     for (const b of $('rail').querySelectorAll('button')) {
       const k = +b.dataset.k, cur = k === G.stage && !start ? 'step' : null;
       if ((b.getAttribute('aria-current') ?? null) !== cur) { if (cur) b.setAttribute('aria-current', cur); else b.removeAttribute('aria-current'); }
-      const words = [...new Set(crashes.filter(c => c.stage === k).map(c => R[c.mark] ?? ''))].filter(Boolean).join(', ');
-      text(b.querySelector('.chip-crash'), words);
+      // one span per kind ("crashed before, " / "crashed after"), so two kinds break into two lines, not three
+      const words = [...new Set(crashes.filter(c => c.stage === k).map(c => R[c.mark] ?? ''))].filter(Boolean), m = b.querySelector('.chip-crash');
+      if (m.dataset.key !== words.join(', ')) { m.dataset.key = words.join(', ');
+        m.replaceChildren(...words.map((w, i) => { const sp = document.createElement('span'); sp.textContent = i < words.length - 1 ? w + ', ' : w; return sp; })); }
     }
   }
   /** The retry table (GAME_SPEC §3 "Retries"), or hidden. @param {null|{head: string[], rows: string[][]}} t */

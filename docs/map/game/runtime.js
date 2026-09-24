@@ -37,10 +37,17 @@
 //   once. Queue entries are {id, tMin, beat, tag?}; the crash controller tags ALL of its own ('crash',
 //   'crashAgain', 'notes' and the outcome) with tag: 'crash', and a new plug pull drops every tagged
 //   entry, so a quick re-crash never shows the previous crash's notes or outcome. Every other queued
-//   caption is held back at the plug (G.worker.caps) and comes back only if the frozen beat resumes.
+//   caption is held back at the plug (G.worker.caps), with the frozen beat's own caption if the plug cut
+//   it before it was fully written; they come back after the outcome if the frozen beat resumes, or if the
+//   recovery moves on to a later stage (s1b after a stage 1 crash), and stay dropped for a same-stage rerun.
+//   "The outcome caption, then the recovery beat" (GAME_SPEC §4 step 8): a recovery into a new stage (or a
+//   beat with captions of its own, or a resumed beat whose caption came back) waits, idling, until the
+//   captions before its own have been shown (G.beat.wait, stepWait), so a stage's caption goes with its
+//   action; a resumed commit (the stamp) waits until the outcome has started. A room beat also does not
+//   hand over to a new stage or scene while a caption of its stage is still to be shown.
 //   The crash caption is queued at the click with `after` (spark + .667 s, a9): it starts after the spark.
 //   Dropped unshown: a hold beat's captions when a player decision leaves the hold (s6b after Approve /
-//   Reject, also a decision queued in the dark); story captions of an earlier stage when a later stage
+//   Reject, also a decision queued in the dark; the one already on screen keeps its hold); story captions of an earlier stage when a later stage
 //   begins; everything when the end card begins (stepBeats first waits for the captions to finish, so an
 //   outcome caption after a late crash is never drawn over the end card).
 //   A shop caption ('buy', 'broken') stays up while the shop shows and nothing else waits (a1 / a2 hold
@@ -110,7 +117,36 @@
   /** Is a crash's own caption (the outcome, after the power is back) still on screen or queued? A caption
    *  already fading (cut) does not count. */
   const crashCapPending = () => (G.cap.now && G.cap.now.tag === CRASH_TAG && G.cap.now.cut === null) || G.cap.queue.some(x => x.tag === CRASH_TAG);
+  const stageOfBeat = id => STORY.beat(id)?.stage;
+  /** Is a story caption of `stage` still to be shown: queued, or on screen (until it has faded; one cut by
+   *  the plug does not count)? In an uncrashed play every room stage's caption has faded before its stage
+   *  (or scene) ends: the beats are timed for it, so this only holds a boundary after a crash moved the
+   *  captions later. */
+  const storyCapPending = stage => {
+    const n = G.cap.now, mine = x => !x.tag && x.beat && stageOfBeat(x.beat) === stage;
+    return (n && n.cut === null && mine(n)) || G.cap.queue.some(mine);
+  };
+  /** A caption that must go before the current beat's own: anything on screen (until it has faded) or queued
+   *  that is not this beat's (the outcome, a stage's held caption re-queued after a crash). */
+  const foreignCapPending = () => { const n = G.cap.now; return (n && n.cut === null && n.beat !== G.beat.id) || G.cap.queue.some(x => x.beat !== G.beat.id); };
   const dropBeatCaps = () => { G.cap.queue = G.cap.queue.filter(x => x.beat !== G.beat.id); };
+  /**
+   * A beat entered or resumed by a recovery may wait before it runs (GAME_SPEC §4 crash step 8: "The outcome
+   * caption, then the recovery beat"): G.beat.wait = {since, q, until}. While it waits the beat stays at q
+   * (its t0 slides with the clock, so nothing after q fires; an event AT q 0, such as "Claude step 1
+   * scheduled", is written at the recovery, which keeps a re-crash during the wait a proper retry) and the
+   * room idles (ROOM.idle: blinks).
+   *   until 'done'    a new stage's beat (or one with captions of its own): until the outcome and any
+   *                   caption re-queued before it have been written, held and faded, so its own caption
+   *                   starts at about q 0 with the action it describes (not dropped at the next stage).
+   *   until 'started' the frozen beat resumed with a commit still ahead (the stamp before its impact): until
+   *                   the outcome caption has started, so the commit is not made before its caption.
+   */
+  function stepWait() {
+    const W = G.beat.wait; if (!W || G.frozenQ !== null || G.worker.phase !== 'on') return;
+    const busy = W.until === 'started' ? G.cap.queue.some(x => x.tag === CRASH_TAG) : foreignCapPending();
+    if (busy) G.beat.t0 = G.clock - W.q; else { delete G.beat.wait; G.dirty = true; }
+  }
   /**
    * Does a crash in beat `id`, recovered into the SAME beat, start it over (true) or resume it where it
    * froze (false)? A retry beat (r2.reread, r4.run, r5.resume, r7.again, r7.money, r8.*, rj.again) runs an
@@ -148,11 +184,13 @@
       // the end card waits until every caption has been shown and has faded (an outcome caption after a
       // late crash in rj.done / s9.done would otherwise be drawn over it); it then starts from its beginning
       if (nb.scene === 'end' && (G.cap.now || G.cap.queue.length)) { B.late = true; return; }
-      // a new stage waits while a crash's outcome caption is still written or queued: it holds this beat's
-      // last drawing (the stamped sheet after a decision queued in the dark or a stamp crash) instead of
-      // running the next stage under it, which would push that stage's own caption past its end (enter()
-      // then drops it: stage 7's 's7' was never shown). The next stage then starts from its beginning.
-      if (nb.stage !== b.stage && crashCapPending()) { B.late = true; return; }
+      // a new stage (or a new scene: s9.done -> the mail page) waits while a crash's outcome caption, or a
+      // caption of this stage, is still to be written or held: it holds this beat's last drawing (the stamped
+      // sheet after a decision queued in the dark or a stamp crash) instead of running the next stage under
+      // it, which would push that stage's own caption past its end (enter() then drops it) or draw this
+      // stage's caption over the next scene. The next beat then starts from its beginning. A safety net: a
+      // recovery into a new stage already waits for the outcome before it runs (stepWait).
+      if ((nb.stage !== b.stage || nb.scene !== b.scene) && ROOMS.includes(b.scene) && (crashCapPending() || storyCapPending(b.stage))) { B.late = true; return; }
       enter(next, B.late ? G.clock : B.t0 + dur);
     }
   }
@@ -265,7 +303,12 @@
     const nowCrashes = G.crashes.filter(c => !c.past).length;   // a rail jump starts a new story: its crashes are not "again"
     // every queued story caption is held back; it comes back only if the frozen beat is resumed. The
     // crash's own (tagged) captions are dropped: a new crash supersedes the old notes and outcome.
-    const held = [...(again ? w0.caps ?? [] : []), ...G.cap.queue.filter(x => x.tag !== CRASH_TAG)];
+    // A story caption of the frozen beat that the plug cuts before it is fully written is held too (first):
+    // if that beat resumes it is written again after the outcome (s9.done keeps "The refund happens once.",
+    // s6.wait "Risky steps wait for a human."). A fully written one was read; it is not shown twice.
+    const n = G.cap.now, nk = !again && n && n.cut === null && !n.tag && n.beat === G.beat.id && capObj(n.id);
+    const unwritten = nk && G.clock - n.t0 < nk.written ? [{ id: n.id, tMin: 0, beat: n.beat }] : [];
+    const held = [...(again ? w0.caps ?? [] : []), ...unwritten, ...G.cap.queue.filter(x => x.tag !== CRASH_TAG)];
     G.cap.queue = [];
     const prev = again ? { phase: w0.phase, t: G.clock - w0.t0, tu: clockOf(w0).tu, rec: w0.rec } : null;
     const hq = again ? w0.hq ?? null : G.hold && !G.hold.step ? G.clock - G.hold.t0 : null;
@@ -296,10 +339,32 @@
     if (G.cap.now && G.cap.now.id === 'notes') interruptCaption();
     G.cap.queue.push({ id: oc, tMin: 0, beat: null, tag: CRASH_TAG });
     G.frozenQ = null; G.worker = { phase: 'on', t0: G.clock }; G.dirty = true;
+    const fb = STORY.beat(frozen), rb = STORY.beat(rec.id);
     if (rec.id === frozen && !restarts(frozen)) {                          // same beat: resume where it froze
-      G.beat.t0 = G.clock - fq; G.q = fq; G.scene = STORY.beat(frozen)?.scene ?? G.scene; G.cap.queue.push(...(w.caps ?? []));
+      G.beat.t0 = G.clock - fq; G.q = fq; G.scene = fb?.scene ?? G.scene; G.cap.queue.push(...(w.caps ?? []));
       if (G.hold && w.hq !== null && w.hq !== undefined) G.hold.t0 = G.clock - w.hq;
-    } else if (!enter(rec.id)) G.scene = STORY.beat(frozen)?.scene ?? 'room';
+      // It may wait where it froze (stepWait; a re-crash's wait is renewed): a beat whose own caption comes
+      // back (s9.done's "The refund happens once.", cut unwritten by the plug) waits until the outcome has
+      // been shown, so its caption goes with its action (the cheer) again; a beat with a commit still ahead
+      // (the stamp before its impact) waits until the outcome caption has started ("Now it is stamped." is
+      // written as the stamp falls, not after it). A hold beat never waits: its hold is open from the power-on.
+      delete G.beat.wait;
+      if (fb && !fb.hold && (w.caps ?? []).some(x => x.beat === frozen)) G.beat.wait = { since: G.clock, q: fq, until: 'done' };
+      else if (fb && !fb.hold && G.beat.committed < commits(fb).length) G.beat.wait = { since: G.clock, q: fq, until: 'started' };
+      return;
+    }
+    // another beat (or the frozen one started over). Moving to a LATER stage, the frozen stage's held captions
+    // that were not shown yet (s1b "Temporal writes down every finished step.") come back after the outcome;
+    // in the same stage the outcome speaks for the rerun and they stay dropped (GAME_SPEC §4 step 8)
+    const later = !!(fb && rb && rb.stage > fb.stage), before = G.cap.queue;
+    G.cap.queue = [];
+    if (!enter(rec.id)) { G.cap.queue = before; G.scene = fb?.scene ?? 'room'; return; }
+    G.cap.queue = [...before, ...(later ? w.caps ?? [] : []), ...G.cap.queue];
+    // "The outcome caption, then the recovery beat": a beat of a new stage, or one with captions of its own,
+    // waits at q 0 (idling) until the captions queued before its own have been shown, so its caption starts
+    // with its action (not after it, nor dropped when the next stage begins). A same-stage rerun (r2.reread,
+    // r7.again, ...) has no caption of its own: it runs under the outcome caption, which describes it.
+    if (rb.stage !== fb?.stage || (rb.captions ?? []).length) G.beat.wait = { since: G.clock, q: 0, until: 'done' };
   }
   function stepCrash() {
     const w = G.worker, T = ROOM.CRASH_T, { tc, tu } = clockOf(w), go = p => { G.worker = { ...G.worker, phase: p, t0: G.clock }; G.dirty = true; };
@@ -407,7 +472,7 @@
   // ---------- update and draw ----------
   function update(dt) {
     if (!G.settings.paused && !hidden) G.clock += Math.min(Math.max(dt, 0), DT_MAX);
-    if (G.frozenQ === null) G.q = qOf(G.beat.t0);
+    stepWait(); if (G.frozenQ === null) G.q = qOf(G.beat.t0);
     stepBeats(); if (G.worker.phase !== 'on') stepCrash(); applyQueued(); stepCaptions(); sound();
     // film cues on every update, not per drawing: ?test=1 draws once per advance(), and a cue must not be lost
     filmCues(G.scene === 'shop' || G.scene === 'wide' ? view().film : null);
@@ -421,6 +486,8 @@
       const step = G.hold && G.hold.step, q = G.frozenQ ?? (step ? Math.min(G.q, STORY.durOf(b, G)) : G.q);
       const hq = G.hold && (crashed && w.hq !== null && w.hq !== undefined ? w.hq : G.clock - G.hold.t0);
       V = G.hold && b.hold ? b.hold.idle(G, hq) : b.R(G, q);
+      // a recovery beat waiting for its captions (stepWait) idles: blinks, the waiting slip's fidget
+      if (G.beat.wait && !G.hold && !crashed && ROOMS.includes(G.scene) && V) V = ROOM.idle(V, G.clock - G.beat.wait.since);
     }
     if (ROOMS.includes(G.scene) && crashed) {
       const recR = r => { const rb = r && STORY.beat(r.id); return rb ? rb.R(G, r.q) : null; }, { tc, tu } = clockOf(w);
@@ -523,15 +590,13 @@
       if (!jump(name === 'break' ? 3 : Number(name.slice(5)))) return;
       if (name === 'break') G.hint = 'tryBreakHint';
     } else {
-      const decide = !(G.hold && G.hold.step), b = beatOf(), approval = !!(b && b.hold && b.hold.action === 'approve');
+      const decide = !(G.hold && G.hold.step);
       const next = STORY.onAct(G, name);
       if (next) {
-        if (decide) {                                                        // a decision leaves the hold: its unshown captions go
-          // Approve / Reject: the hold's caption already on screen (s6 / s6b) fades too, so it is not drawn
-          // over the stamp and into the next stage. A shop caption stays (it holds through its sequence).
-          if (approval && G.cap.now && G.cap.now.beat === G.beat.id) interruptCaption();
-          dropBeatCaps();
-        }
+        // a decision leaves the hold: its unshown captions go. The one on screen ("You are the manager now.")
+        // keeps its minimum hold (GAME_SPEC §1.8: only the plug interrupts a caption); the stamp beat rests
+        // until it has faded (story.js stampDur), so stage 7's caption still starts at about q 0.
+        if (decide) dropBeatCaps();
         enter(next);
       }
     }

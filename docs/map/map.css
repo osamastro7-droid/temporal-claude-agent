@@ -93,6 +93,9 @@ kbd { font: 600 .82rem/1 var(--mono); }
 
 /* ---------- buttons: boxes drawn in pencil ---------- */
 button { font: inherit; color: inherit; }
+/* no native tap flash (a light-blue fill over the paper, even on a dashed aria-disabled button): :active and
+   :focus-visible give the feedback */
+button, .hot { -webkit-tap-highlight-color: transparent; }
 .btn {
   position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-height: 48px; min-width: 48px; padding: 10px 20px; border: 0; border-radius: 3px;
@@ -228,6 +231,9 @@ button { font: inherit; color: inherit; }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; align-items: center; font-size: .9rem; }
 .keys dt { justify-self: start; }
 .keys dd { margin: 0; color: var(--graphite-2); }
+/* P / A / R while "Single-key shortcuts" is off (ui.js keysLegend): struck through, with the word "(off)" */
+.keys dt.off kbd, .keys dd.off > span:first-child { text-decoration: line-through 1.5px; }
+.keys .key-off { font-style: italic; }
 .keys kbd { display: inline-block; min-width: 2.3em; padding: 5px 8px; text-align: center; background: var(--i-box) no-repeat 0 0 / 100% 100%; }
 .game[data-scene="start"] .keys-box { padding-top: 0; background: none; }
 /* hide the keyboard legend on touch-only devices */
@@ -265,14 +271,20 @@ button { font: inherit; color: inherit; }
   .foot { padding: 0 24px 20px; }
 }
 @media (min-width: 1100px) {
-  /* the rail (and its crash marks) must fit above the fold at 1440x900: a tighter vertical rhythm here */
-  .wrap { padding: 22px 32px 24px; }
+  /* the rail (and its crash marks) must fit above the fold at 1440x900: a tighter vertical rhythm here. A crash
+     mark adds one line under a stage's name (two lines when a stage crashed both before and after), and the
+     settings row (#toggles) must still end above 900 px (tests/web layout: 1440x900 after crashes) */
+  .wrap { padding: 16px 32px 24px; }
   .foot { padding: 0 32px 24px; }
   .controls { margin-top: 12px; }
   .rail { margin-top: 10px; }
   .rail .small { margin-bottom: 2px; }
-  .rail .chip { gap: 2px; }
+  .rail .chip { gap: 2px; padding-bottom: 0; position: relative; }
   .rail .chip-t { line-height: 1.18; }
+  /* the red zigzag sits on the ring's top-right edge (not above the words), so a mark costs one line of height */
+  .rail .chip-crash { line-height: 1.15; gap: 0; }
+  .rail .chip-crash > span { white-space: nowrap; }
+  .rail .chip-crash::before { position: absolute; top: -4px; left: calc(50% + 12px); }
   /* the reasons sit beside their buttons, not under them, so the bar keeps one height (the rail does not jump) */
   .ctl { display: flex; align-items: center; gap: 6px 14px; }
   .ctl-act { flex-wrap: wrap; }
@@ -282,14 +294,14 @@ button { font: inherit; color: inherit; }
   .ctl-plug .btns { flex: none; }
   #why-action:empty { margin-top: 0; }
   .ctl-if { display: none; }                                            /* the panel is beside the canvas */
-  .head { display: flex; align-items: flex-end; gap: 12px 40px; margin-bottom: 14px; }
+  .head { display: flex; align-items: flex-end; gap: 12px 40px; margin-bottom: 10px; }
   .title { flex: none; font-size: 2.4rem; }
   /* the lede takes the width beside the title: two lines, not three, so the settings row (#toggles) fits
      above the fold at 1440x900 in play */
   .lede { flex: 1 1 auto; margin: 0 0 10px; max-width: 80ch; font-size: 1rem; }
-  .game { grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); gap: 28px; }
+  .game { grid-template-columns: minmax(0, 1fr) minmax(300px, 352px); gap: 28px; }
   .play { margin: 0; }
-  .toggles { margin-top: 6px; padding-top: 6px; }
+  .toggles { margin-top: 4px; padding-top: 6px; }
   /* the start card as a two-column form (the label and "Remember" on the left, the field, the reason and the
      privacy note on the right), so the settings row is also in view at 1440x900 */
   .nameform { margin-top: 14px; gap: 6px 24px; max-width: 900px; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
@@ -307,6 +319,9 @@ button { font: inherit; color: inherit; }
   .controls { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .ctl-plug { justify-items: stretch; text-align: left; }
   .ctl-plug .why { max-width: none; }
+  /* the note under the action keeps two lines of room in every state (empty in the approval hold, one line while
+     watching, two in the dark), so the plug below it does not move under the player's finger */
+  #why-action, #why-action:empty { display: block; height: auto; min-height: 3.1em; margin-top: 0; }
   .btns .btn { flex: 1 1 0; min-width: 0; padding-left: 12px; padding-right: 12px; }
   .toggles { display: grid; grid-template-columns: 1fr 1fr; }
   .toggles .btn { justify-content: flex-start; text-align: left; }

@@ -682,12 +682,14 @@ window.ROOM = (() => {
     // the things in the air, in front of him
     const ck = r.receipt ? r.receipt.check ?? 0 : 0;
     if (ck > 0) { at(c, GREEN, () => pencilMarks(c, d.green, { progress: ck, color: 'green' })); if (ck < 1) tips.green = greenTip(ck); }
-    if (!envOnDesk(env)) envelopeOff(c, env);
     if (r.dash) dash(c, r.dash);
     if (r.clock && part('clock') > 0) { const cu = Math.min(clamp(r.clock.u ?? 1, 0, 1), part('clock')), t = drawClock(c, cu, r.clock.angle ?? 0, clamp(r.clock.alpha ?? 1, 0, 1)); if (t) tips.graphite = t; }
     const w = r.wait, wb = w && w.clip === 'badge' ? badgeOf(r.pose) : null;
     if (w) { drawPause(c, w); if (wb) drawSlot(c, w, wb); drawSlip(c, w, { badge: wb }); }
     if (r.stamp) drawStamp(c, r.stamp, w);
+    // the email in the air is the nearest thing (a9.js:283-284 draws the flight last, over the room): in front of
+    // the waiting slip, its pause sign and stamp, the clock and the dash
+    if (!envOnDesk(env)) envelopeOff(c, env);
     RM.question(c, r.q ?? 0, r.q2 ?? 0);
     // the agent being drawn on: a3's stRoom item, drawn over the finished room (a3.js:457, :505), always
     // pose 'rest', face 'open' (the pencil's tip follows the 'agent/rest' cel: story.js partTip.agent)

@@ -4,7 +4,7 @@
 // The plug is used both ways: the focused #btn-plug (Enter / Space) and the P key, each also while dark.
 // Time moves through window.__game.advance (?test=1).
 import { test, expect } from '@playwright/test';
-import { open, problems, state, view, advance, sync, until } from './helpers.mjs';
+import { open, problems, state, view, advance, sync, until, railTo } from './helpers.mjs';
 
 /** Where the focus is, and whether it shows (:focus-visible with a real outline). */
 const focusNow = page => page.evaluate(() => {
@@ -139,5 +139,68 @@ test('5c R rejects at the approval; letters are ignored while the name input has
   await page.keyboard.press('r'); await sync(page);
   s = await state(page);
   expect(s.approval.decision).toBe('reject');
+  expect(await problems(w)).toEqual([]);
+});
+
+/** The focused element's id and whether it shows a ring (:focus-visible), read outside any key listener. */
+const focusRing = page => page.evaluate(() => { const a = document.activeElement; return { id: a ? a.id || a.tagName : null, visible: !!a && a.matches(':focus-visible') }; });
+/** Advance in .5 s steps until the live action is `act` and enabled. */
+async function untilAction(page, act, max = 160) {
+  for (let i = 0; i < max; i++) { const v = await view(page); if (v.action.act === act && v.action.enabled) return v; await advance(page, .5); }
+  throw new Error(`action ${act} never became live`);
+}
+
+// Regression for the pointer-moved ("quiet") focus (ui.js moveFocus / refocus): after a MOUSE click on Start,
+// the plug or a rail chip, ui.js puts the focus on #btn-action without a ring; the player did not choose it,
+// so Space pauses and Enter does not press the approval behind the dark. The end card's #btn-again is the
+// player's next step, so Space there plays again. Real mouse clicks (page.locator().click()) and real keys only.
+// The two key checks are soft so one run reports both (the play goes on either way).
+test('5d mouse, then keys: focus ui.js moved after a click does not press what the player did not choose', async ({ page }) => {
+  test.setTimeout(180000);
+  const w = await open(page);
+  await page.locator('#name-input').fill('Zoë');
+  await page.locator('#name-start').click(); await sync(page);          // Start with the mouse
+  let s = await state(page);
+  expect(s).toMatchObject({ scene: 'shop', name: 'Zoë' });
+  expect(await focusRing(page), 'after a mouse Start: focus on the action button, no ring').toEqual({ id: 'btn-action', visible: false });
+  // Space on that focus pauses (the legend), it does not press Buy
+  await untilAction(page, 'buy');
+  const before = await state(page);
+  await page.keyboard.press(' '); await sync(page);
+  s = await state(page);
+  expect(s.settings.paused, 'Space pauses').toBe(true);
+  expect({ id: s.beat.id, q: s.q }, 'Space did not press Buy').toEqual({ id: before.beat.id, q: before.q });
+  await page.keyboard.press(' '); await sync(page);
+  expect((await state(page)).settings.paused, 'Space again plays on').toBe(false);
+  // the rail chip with the mouse: back on the action button, no ring
+  await railTo(page, 6);
+  expect(await focusRing(page), 'after a mouse rail click').toEqual({ id: 'btn-action', visible: false });
+  await untilAction(page, 'approve');
+  // the plug with the mouse at the approval: Enter in the dark must not queue Approve (the player did not choose it)
+  const plug = page.locator('#btn-plug');
+  await plug.click(); await sync(page);
+  expect(await focusRing(page), 'after a mouse plug click').toEqual({ id: 'btn-action', visible: false });
+  await until(page, { phase: 'dark' }, 3);
+  await page.keyboard.press('Enter'); await sync(page);
+  expect.soft((await state(page)).approval.queued, 'Enter on the quiet focus in the dark queues nothing').toBeNull();
+  await page.keyboard.press('a'); await sync(page);
+  expect((await state(page)).approval.queued, 'A queues Approve in the dark').toBe('approve');
+  // plug it back in with the mouse, then play to the end with the mouse (real clicks on any live action)
+  await plug.click(); await sync(page);
+  await until(page, { phase: 'on' }, 30);
+  for (let i = 0; i < 800; i++) {
+    s = await state(page);
+    if (s.scene === 'end') break;
+    const v = await view(page);
+    if (v.action.act && v.action.enabled && s.worker.phase === 'on') { await page.locator('#btn-action').click(); await sync(page); continue; }
+    await advance(page, .5);
+  }
+  expect(s.scene, 'reached the end card').toBe('end');
+  expect(s).toMatchObject({ branch: 'approve', world: { refunds: 1, emails: 1 } });
+  expect((await focusRing(page)).id, 'the end card focuses Play again').toBe('btn-again');
+  // Space on Play again plays again (the end card's next step), even though the last input was the mouse
+  await page.keyboard.press(' '); await sync(page);
+  s = await state(page);
+  expect.soft(s, 'Space on #btn-again plays again').toMatchObject({ scene: 'shop', name: 'Zoë' });
   expect(await problems(w)).toEqual([]);
 });

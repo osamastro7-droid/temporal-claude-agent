@@ -113,7 +113,7 @@ flowchart TD
     K --> B["...right after a tool finished"]
     K --> C["...after the money moved,<br/>before the reply"]
     K --> D["...while waiting for approval"]
-    A --> A2["The heartbeat stops. Temporal retries<br/>the step on another worker, which resumes<br/>the conversation from the session store."]
+    A --> A2["The heartbeat stops. Temporal retries<br/>the step on another worker. Step 1 starts<br/>over from the request; later steps resume<br/>the conversation from the session store."]
     B --> B2["The result is already in the<br/>workflow history. It never runs again."]
     C --> C2["Temporal retries the tool. Same receipt<br/>number, so the bank says: already done."]
     D --> D2["Nothing is running.<br/>The wait lives in Temporal."]

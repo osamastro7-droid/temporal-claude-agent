@@ -54,13 +54,16 @@
 //                history-approved.json uses §3's wording for the refund line: "... (also the receipt
 //                number)" (GAME_SPEC.md:241), not st. 7's shorter "(the receipt number)" (:356).
 //     world:     { traySlip, refunds, refundRuns, emails, emailRuns, receiptOut, envelopeSent, lookups,
-//                  + receiptE, + attempts }
+//                  + receiptE, + attempts, + slipAt }
 //                the shop and the room outside the worker; survives crashes. traySlip 0|1 (request in
 //                the tray), refunds/emails = how many the SHOP recorded (1 at most), *Runs = how many
 //                times the Activity ran, receiptOut 0|1, envelopeSent 0|1, lookups = lookup runs.
 //                receiptE 0..150 = how much receipt paper is out of the printer (a crash stops it there;
 //                stage 7's rerun finishes it). attempts = {step1, lookup, step2, refund, step3, email,
 //                step4}: how many times each Activity started (the retry lines' attempt numbers).
+//                slipAt: undefined | the G.clock at which the request lands in the tray after a crash in
+//                s1.build before it landed (requestDurable): it goes on falling on the game clock (t1), so
+//                every later R reads traySlip || G.clock >= slipAt (base), never a second slip.
 //     worker:    { phase: 'on'|'pulling'|'dark'|'pushing'|'waking'|'notes'|'recover', t0 }
 //                the crash controller's phase and the G.clock at which it began (runtime.js).
 //              + c0, u0, when, saved, rec, caps, prev, sparked, powered, hq: set by runtime at the plug click
@@ -399,7 +402,14 @@ window.STORY = (() => {
    */
   function settlePencils(G, R) {
     if (!R || !('pencils' in R)) return R;
-    if (G.frozenQ !== null || !Array.isArray(R.pencils) || !R.pencils.some(p => p.lift > 0)) delete R.pencils;
+    if (G.frozenQ !== null) {
+      // frozen: the room decides, except Temporal's pencil gliding away from a mark it finished (lift > 0):
+      // ROOM draws the indigo tip only at a mark (0 < u < 1), so without it the pencil would vanish on the page
+      const k = Array.isArray(R.pencils) ? R.pencils.filter(p => p.color === 'indigo' && p.lift > 0) : [];
+      if (k.length) R.pencils = k; else delete R.pencils;
+      return R;
+    }
+    if (!Array.isArray(R.pencils) || !R.pencils.some(p => p.lift > 0)) delete R.pencils;
     return R;
   }
   /** Temporal's indigo pencil: it writes each committed mark (inkPlan, on the game clock, so it keeps
@@ -418,7 +428,7 @@ window.STORY = (() => {
     // coming in for the beat's next commit (only while the story runs: in the dark it has nothing to write)
     if (b && G.frozenQ === null && b.commit) {
       const cm = (Array.isArray(b.commit) ? b.commit : [b.commit]).find(c => c.t > q - 1e-9 && c.t - q <= .42);
-      if (cm) { const u = 1 - (cm.t - q) / .42, a = rowTip(cm.row, cm.part === 'c' && !G.book[cm.row].t ? 't' : cm.part, 0); return glide([lerp(HOME.indigo[0], a[0], easeOut(u)), lerp(HOME.indigo[1], a[1], easeOut(u))], 'indigo', 1 - u * .8); }
+      if (cm) { const a0 = Math.max(0, cm.t - .42), u = clamp((q - a0) / Math.max(1e-6, cm.t - a0), 0, 1), a = rowTip(cm.row, cm.part === 'c' && !G.book[cm.row].t ? 't' : cm.part, 0); return glide([lerp(HOME.indigo[0], a[0], easeOut(u)), lerp(HOME.indigo[1], a[1], easeOut(u))], 'indigo', 1 - u * .8); }
     }
     return null;
   }
@@ -445,6 +455,10 @@ window.STORY = (() => {
     let face = keys[0][1]; for (const [t, fc] of keys) { if (q < t - 1e-9) break; face = fc; }
     return BLINKABLE.has(face) && blinks.some(b => q >= b - 1e-9 && q < b + f(1) - 1e-6) ? 'closed' : face;
   }
+  /** The request still falling on the game clock after a crash in s1.build before it landed (world.slipAt,
+   *  requestDurable): the recovery's drawing (K.rec, a quick re-plug powers on ~1.2 s after the click) keeps
+   *  it in the air until it lands instead of dropping it from view. null otherwise. */
+  const falling = G => { const a = G.world.slipAt; return a !== undefined && G.clock < a - 1e-9 ? dropSlip(G.clock - a + T1.drop[1]) : null; };
   /** Typing: typeA / typeB 4 frames each (a3.js:423, a9.js:183). */
   const typing = (q, t0) => (Math.floor((q - t0) * 6 + 1e-6) % 2 ? 'typeB' : 'typeA');
 
@@ -454,7 +468,7 @@ window.STORY = (() => {
     const W = G.world, pen = inkPencil(G, b, q);
     return {
       pose: 'rest', face: 'open', visor: 0, lamp: 1, dark: 0, pull: 0, hand: null, spark: 0, drawer: 0, folder: 0,
-      traySlip: W.traySlip ? 1 : 0, held: null, slip: null,
+      traySlip: W.traySlip || (W.slipAt !== undefined && G.clock >= W.slipAt - 1e-9) ? 1 : 0, held: null, slip: falling(G),
       book: { rows: bookRows(G), k: 0, glow: 0, branch: G.branch },
       wait: null, stamp: null, clock: null,
       receipt: { e: W.receiptOut ? 150 : clamp(W.receiptE ?? 0, 0, 150), check: 0 },
@@ -671,8 +685,10 @@ window.STORY = (() => {
   // the room's draw-on, timed like a3.js:386-391 (the pencil enters .45 s after the cut; each part at hand
   // speed; moves in proportion to their distance), plus the email and Temporal's notebook (indigo pencil)
   const T1 = { agent: [.45, 1.479], printer: [1.75, 2.049], tray: [2.159, 2.409], mail: [2.52, 2.94], book: [3.6, 4.02] };   // the indigo pencil comes in as the graphite one leaves
-  T1.drop = [g12(T1.book[1] + .2), g12(T1.book[1] + .2) + .45];   // a3.js:392 T.drop
-  T1.commit = g12(T1.drop[1] + 1);                                 // row 0 ~1 s after the slip lands (GAME_SPEC §4 st. 1)
+  // the slip lands late enough that the pencil writes row 0 just after "Temporal writes down every finished
+  // step." has started (s1b needs s1's minimum hold + fade + gap: s1.build q ~6.5), never before it
+  T1.drop = [g12(T1.book[1] + 1.45), g12(T1.book[1] + 1.45) + .45];   // a3.js:392 T.drop, 1.25 s later: 5.5 -> 5.95
+  T1.commit = g12(T1.drop[1] + 1);                                 // row 0 ~1 s after the slip lands (GAME_SPEC §4 st. 1): 6.917
   T1.end = T1.commit + 1;
   /** Stage 1's clock: the room's drawing, the request's fall and Temporal's pencil are not the worker's, so
    *  they run on the game clock even while the story is frozen (a crash here: the line finishes, glowing). */
@@ -684,7 +700,11 @@ window.STORY = (() => {
     if (G.beat.id !== 's1.build' || G.book[0].t) return;
     const t0 = Math.max(G.clock, G.beat.t0 + T1.book[1] + .1);
     for (const part of ['t', 'c']) { G.book[0][part] = 1; G.ink.push({ row: 0, part, t0 }); }
-    G.world.traySlip = 1; log(G, 'started');
+    // the slip itself is not the worker's either: if it is still falling (or not yet in view) it goes on
+    // falling on the game clock (the s1.build R, t1) and lands at t0 + T1.drop[1]; later beats show it in
+    // the tray from then on (base). Setting traySlip here put a second slip in the tray under the falling one.
+    if (!G.world.traySlip) G.world.slipAt = G.beat.t0 + T1.drop[1];
+    log(G, 'started');
   }
   const partTip = {
     agent: u => { const cel = celOf('agent/rest'); return cel ? RMx().celTip(cel, u, SD.AG.x, SD.AG.y) : [SD.AG.x - 110 + 220 * u, SD.AG.y - 300 + 180 * Math.sin(u * 9)]; },   // a3.js:383
@@ -703,7 +723,7 @@ window.STORY = (() => {
     if (q < T1.agent[0]) { const u = sm(0, T1.agent[0], q, easeOut); g = glide([lerp(HOME.graphite[0], partTip.agent(0)[0], u), lerp(HOME.graphite[1], partTip.agent(0)[1], u)], 'graphite', 1 - u); }
     else for (let i = 0; i < P.length; i++) {
       const a = T1[P[i]];
-      if (q < a[1]) { g = pencil(partTip[P[i]](sm(a[0], a[1], q, lin)), 'graphite', 0); break; }
+      if (q < a[1]) { const u = sm(a[0], a[1], q, lin); g = u <= 0 ? glide(partTip[P[i]](0), 'graphite', .01) : pencil(partTip[P[i]](u), 'graphite', 0); break; }   // u 0: ROOM draws no tip, so a glide
       const nx = P[i + 1];
       if (nx && q < T1[nx][0]) { const u = sm(a[1], T1[nx][0], q, easeInOutSine), A = partTip[P[i]](1), B = partTip[nx](0); g = glide([lerp(A[0], B[0], u), lerp(A[1], B[1], u)], 'graphite', Math.sin(Math.PI * u)); break; }
       if (!nx && q < a[1] + .6) { const u = sm(a[1], a[1] + .6, q, easeIn), A = partTip[P[i]](1); g = glide([lerp(A[0], HOME.graphite[0], u), lerp(A[1], HOME.graphite[1], u)], 'graphite', u * 2); }
@@ -728,7 +748,7 @@ window.STORY = (() => {
     // the pencil draws the room (the plug is not live until the room exists: GAME DECISION, see the report)
     // the pencil draws the room, the request drops into the tray, Temporal writes it down (row 0, text and
     // check together): "Workflow started"
-    roomBeat('s1.build', { stage: 1, dur: T1.end, captions: [['s1', .75], ['s1b', T1.commit]],   // a3.js:398: t0 = agent start + .3
+    roomBeat('s1.build', { stage: 1, dur: T1.end, captions: [['s1', .75], ['s1b', T1.commit - .42]],   // a3.js:398: t0 = agent start + .3
       commit: [{ t: T1.commit, row: 0, part: 't' }, { t: T1.commit, row: 0, part: 'c' }],
       events: [[T1.drop[1], G => { G.world.traySlip = 1; }], [T1.commit, G => log(G, 'started')]],
       cls: () => 'any', recover: () => 's2.read', outcome: () => 'out1',
@@ -743,15 +763,19 @@ window.STORY = (() => {
         // Temporal's pencil: it draws the notebook, waits over the page, then writes the request (inkPencil)
         // (no approach glide from HOME: the build's own pencil already hovers over the page, 27 px from row 0)
         const ink = inkPencil(G, qc >= T1.commit - 1e-9 ? beats['s1.build'] : null, qc), bp = buildPencils(q);
-        R.pencils = ink ? [...bp.filter(p => p.color !== 'indigo'), ink] : q >= T1.commit + 1 ? bp.filter(p => p.color !== 'indigo') : bp;
+        // once row 0's ink has started (at the commit, or at once after a crash: requestDurable) the build's
+        // hovering indigo pencil is done: it never comes back over the page after writing and gliding away
+        const inked = inkPlan(G).some(i => i.row === 0 && i.s0 <= G.clock);
+        R.pencils = ink ? [...bp.filter(p => p.color !== 'indigo'), ink] : q >= T1.commit + 1 || inked ? bp.filter(p => p.color !== 'indigo') : bp;
         return R;
       },
       next: () => 's1.req' }),
     // Temporal writes the request down (row 0, text and check together): "Workflow started".
-    // he waits while the caption finishes: s1b starts once s1 has faded (s1.build q ~6.5, not at the commit) and
-    // lives ~4.96 s with its fade; 5.0 s here lets it end, plus the .2 s gap, before s2.read, so each later
-    // caption (s2-s5, each a little shorter than its beat) starts at about q 0, ahead of the action it names
-    roomBeat('s1.req', { stage: 1, dur: 5.0,
+    // he waits while the caption finishes: s1b starts once s1 has faded (s1.build q ~6.5, .42 s before the
+    // commit at 6.917, so it is on screen as the pencil writes) and lives ~4.96 s with its fade (ends ~11.46,
+    // + .2 gap = ~11.67 = T1.end 7.917 + 3.75), so s2.read starts as it goes and each later caption (s2-s5,
+    // each a little shorter than its beat) starts at about q 0, ahead of the action it names
+    roomBeat('s1.req', { stage: 1, dur: 3.75,
       cls: () => 'any', recover: () => 's2.read', outcome: () => 'out1',
       R: (G, q) => { const R = base(G, beats['s1.req'], q), q2 = tw(q); R.face = look(q2, [[0, 'side'], [.5, 'open']], [1.25, 3.5]); return R; },
       next: () => 's2.read' }),
@@ -779,7 +803,8 @@ window.STORY = (() => {
   const readBeat = (id, P, o) => roomBeat(id, { stage: 2, dur: readPerf(0, P.L, P.pb, P.rl).dur,
     cls: () => 'any', recover: () => 'r2.reread', outcome: () => 'out2',
     sfx: [[P.L + .96, 'slip', { k: 0 }]],
-    R: (G, q) => { const R = base(G, beats[id], q), p = readPerf(tw(q), P.L, P.pb, P.rl); Object.assign(R, { pose: p.pose, face: p.face, held: p.held, traySlip: p.traySlip, slip: p.slip }); return R; },
+    R: (G, q) => { const R = base(G, beats[id], q), p = readPerf(tw(q), P.L, P.pb, P.rl); const air = !p.slip && R.slip;
+      Object.assign(R, { pose: p.pose, face: p.face, held: p.held, traySlip: air ? 0 : p.traySlip, slip: air || p.slip }); return R; },
     next: () => 's3.pause', ...o });
   const s2Beats = [
     readBeat('s2.read', READ2, { dur: 5.25, captions: ['s2'], events: [[0, G => { run(G, 'step1', false); log(G, 'step1Scheduled'); }]] }),
@@ -1058,10 +1083,10 @@ window.STORY = (() => {
     sfx: G => (G.world.envelopeSent && retry ? [] : [[T8e.hop[0] + f(1), 'whoosh', { dir: 1 }]]),
     R: (G, q) => emailR(G, q, id), next: () => 's8.step4', ...o });
   // step 4: the email's answer goes back in, he types his final answer; row 5 'done'; the workflow completes
-  const T8d = { type: [f(16), f(26)], typeA: f(14), down: f(14), rest: f(27), commit: f(31), end: 3.5 };
+  const T8d = { type: [f(16), f(26)], typeA: f(14), rest: f(27), commit: f(31), end: 3.5 };
   function step4Perf(x) {
     const t = T8d, pose = x >= t.type[0] && x < t.type[1] ? typing(x, t.type[0]) : track(x, [[0, 'rest'], [t.typeA, 'typeA', f(2)], [t.rest, 'rest', .25]]);
-    const face = look(x, [[0, 'pause'], [BACK.sink[1], 'sideR'], [t.down, 'down'], [t.rest, 'open']], [g12(t.rest + .5)]);
+    const face = look(x, [[0, 'pause'], [BACK.sink[1], 'down'], [t.rest, 'open']], [g12(t.rest + .5)]);   // straight to typing (a 1-drawing 'sideR' read as a flicker)
     return { pose, face };
   }
   const step4Beat = (id, intro, o = {}) => roomBeat(id, { answer: 'email_customer', intro, stage: 8, dur: T8d.end + off(intro),
@@ -1088,7 +1113,7 @@ window.STORY = (() => {
     R.face = look(q2, [[0, 'sideR'], [T9.happy, 'happy']], [f(2)]);
     const A = greenTip(0), B = greenTip(1);
     if (q >= T9.green[0] - .4 && q < T9.green[0]) { const u = sm(T9.green[0] - .4, T9.green[0], q, easeOut); R.pencils = [...R.pencils, glide([lerp(HOME.green[0], A[0], u), lerp(HOME.green[1], A[1], u)], 'green', 1 - u)]; }
-    else if (q >= T9.green[0] && q < T9.green[1]) R.pencils = [...R.pencils, pencil(greenTip(gu), 'green', 0)];
+    else if (q >= T9.green[0] && q < T9.green[1]) R.pencils = [...R.pencils, gu <= 0 ? glide(greenTip(0), 'green', .01) : pencil(greenTip(gu), 'green', 0)];   // check 0: ROOM draws no tip, so a glide
     else if (q >= T9.green[1] && q < T9.green[1] + .5) { const u = sm(T9.green[1], T9.green[1] + .5, q, easeIn); R.pencils = [...R.pencils, glide([lerp(B[0], HOME.green[0], u), lerp(B[1], HOME.green[1], u)], 'green', u * 2)]; }
     return R;
   }
@@ -1392,7 +1417,10 @@ window.STORY = (() => {
     const v = { name: G.name, slug: G.slug }, F = t => fill(t ?? '', v);   // {name} / {slug} in panel texts (textContent only)
     // while the power is off, "Now" says so (the stage's text would still describe the dead worker's step)
     const dark = (G.worker.phase === 'pulling' || G.worker.phase === 'dark') && P.darkNow;
-    return { now: F(dark ? P.darkNow : G.hint ? H()[G.hint] : (rj && rj.now) ?? P.now[G.stage]), ifPlug: cls ? F(ip[cls] ?? (rj ? ipS[cls] : null) ?? ip.any) : '', proof: F((rj && rj.proof) ?? P.proof[G.stage]),
+    // after an Approve in stage 6 (the stamp and its rest) "Now" no longer asks for the decision: panel.nowDecided
+    // (the Reject press already has panel.reject.now); no such text in CONTENT: the stage's own, as before
+    const decided = G.stage === 6 && !rj && G.approval && G.approval.decision ? P.nowDecided : null;
+    return { now: F(dark ? P.darkNow : G.hint ? H()[G.hint] : (rj && rj.now) ?? decided ?? P.now[G.stage]), ifPlug: cls ? F(ip[cls] ?? (rj ? ipS[cls] : null) ?? ip.any) : '', proof: F((rj && rj.proof) ?? P.proof[G.stage]),
       note: o ? { text: F(o.text), retryNote: o.retry ? P.retryNote : '', table: o.retry ? P.retryTable : null } : null,
       notebook: G.book.map((r, k) => r.t ? labels[k] + (r.c ? ' ✓' : '') : '').filter(Boolean),
       history: G.events.map(e => e.text) };

@@ -60,7 +60,7 @@
       </form>
 
       <div id="controls" class="controls" role="group" hidden>
-        <div class="ctl ctl-act"><div class="btns"><button id="btn-action" type="button" class="btn primary" aria-disabled="true" aria-describedby="why-action"></button><button id="btn-alt" type="button" class="btn" aria-disabled="true" aria-describedby="why-action" hidden></button></div><p id="why-action" class="why" aria-live="polite"></p></div>
+        <div class="ctl ctl-act"><div class="btns"><button id="btn-action" type="button" class="btn primary" aria-disabled="true" aria-describedby="why-action"></button><button id="btn-alt" type="button" class="btn" aria-disabled="true" aria-describedby="why-action" hidden></button></div><p id="why-action" class="why" aria-live="polite"></p><span id="ready-sr" class="sr" aria-live="polite"></span></div>
         <div class="ctl ctl-plug"><div class="btns"><button id="btn-plug" type="button" class="btn plug" aria-pressed="false" aria-disabled="true" aria-describedby="why-plug"></button></div><p id="why-plug" class="why"></p></div>
         <!-- the panel's "If you pull the plug now" and outcome, repeated under the plug while the panel sits below the
              canvas (< 1100 px); aria-hidden: screen readers read them once, in the panel -->
@@ -94,7 +94,7 @@
       <p id="status" class="status" role="status"></p>
     </div>
 
-    <aside id="panel" class="panel" aria-labelledby="p-title">
+    <section id="panel" class="panel" aria-labelledby="p-title">
       <h2 id="p-title" class="sr"></h2>
       <p class="who-box"><span id="p-who-label" class="label"></span> <span id="p-who" class="who"></span></p>
       <div class="now-box">
@@ -122,7 +122,7 @@
         <h3 id="keys-label" class="small"></h3>
         <dl id="keys" class="keys"></dl>
       </div>
-    </aside>
+    </section>
   </section>
 
   <div id="lower" class="lower">

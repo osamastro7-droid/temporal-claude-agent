@@ -99,10 +99,10 @@ window.CONTENT = {
     noscript: 'This page is a game drawn with JavaScript. Please turn JavaScript on to play.',
     // accessible names of page regions (ui.js sets them at start; index.html has no text of its own)
     aria: {
-      game: 'The game', controls: 'Controls', endbar: 'Play again', panel: 'What is happening',
+      game: 'The game', controls: 'Controls', endbar: 'The end', panel: 'What is happening',
       cases: 'Special cases', findings: 'What we found inside the engine', proven: 'Proven with real Claude',
     },
-    lede: 'A playable pencil film of a Claude agent running on Temporal. Buy a teapot, ask for a refund, approve it as the manager, and pull the plug on the server whenever you like.',
+    lede: 'A playable pencil film of a Claude agent running on Temporal. Buy a teapot, ask for a refund, approve it as the manager, and pull the plug on the server at almost any moment behind the scenes.',
     name: {
       label: 'What\u2019s your name?',
       start: 'Start',
@@ -141,7 +141,7 @@ window.CONTENT = {
       // decision is queued, GAME_SPEC §4 st. 6)
       approveOff: 'The power is off. Your decision waits until it is back.',
     },
-    tryBreakHint: 'Pull the plug at any moment (or press P). Try it while the slip is still in the air.',
+    tryBreakHint: 'Pull the plug at almost any moment (or press P). Try it while the slip is still in the air.',
     // the panel under the controls (ui.js). now[k] / proof[k] are per stage 0..9, true to
     // facts.md §4.
     panel: {
@@ -315,7 +315,7 @@ window.CONTENT = {
         text: [
           'Eight scenarios, 2 runs each, on Haiku 4.5, Sonnet 5, Opus 5.5 and Fable 5.1: 2 of 2 each, 16 of 16 per model.',
           'Opus 5.5 ran on Claude Code 2.1.280.',
-          '12 automated tests, 4 of which kill a worker on purpose: the 3 crash tests in tests/test_crash.py and test_real_engine_refund_with_approval_and_crash.',
+          'Without a Claude account: 12 automated tests (a scripted Claude or a stand-in model), 4 of which kill a worker on purpose: the 3 crash tests in tests/test_crash.py and test_real_engine_refund_with_approval_and_crash.',
           'The same eight pass through Amazon Bedrock with a stand-in model.',
         ],
       },
