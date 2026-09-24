@@ -1,0 +1,23 @@
+{
+  "about": "The history panel's events for one approved refund, uncrashed (GAME_SPEC §10 test 1). Written from /tmp/claude-501/gm/facts.md §3 (Temporal's measured history, dump_history.py) in the wording of GAME_SPEC §3 'HTML panel lines', NOT from docs/map/content.js: this file is the independent truth the game is checked against. <slug> is the player's slug (GAME_SPEC §6: ascii lower letters of the drawn name, <= 12, else 'you'); the demo's maria@example.com becomes <slug>@example.com. stage = the GAME_SPEC §4 stage whose beat writes the line. facts = the history event it stands for. Workflow-task events are left out (facts.md §3), and so are the 'claude segment 2..4 scheduled' and 'email_customer scheduled' lines, which GAME_SPEC §3 does not show. '(nothing is written while it waits for approval)' is a note, not an event.",
+  "slugPlaceholder": "<slug>",
+  "events": [
+    { "text": "Workflow started: \"Order A-1001 arrived broken, I want my money back.\"", "stage": 1, "facts": "1 WORKFLOW_EXECUTION_STARTED" },
+    { "text": "Claude step 1 scheduled", "stage": 2, "facts": "5 ACTIVITY_TASK_SCHEDULED run_claude_segment id=1" },
+    { "text": "Claude step 1 done: wants look_up_order (A-1001)", "stage": 3, "facts": "7 ACTIVITY_TASK_COMPLETED deferred look_up_order {\"order_id\":\"A-1001\"}" },
+    { "text": "look_up_order scheduled, ID tool-toolu_d1afa0cb_01", "stage": 4, "facts": "11 ACTIVITY_TASK_SCHEDULED look_up_order id=tool-toolu_d1afa0cb_01" },
+    { "text": "look_up_order done: Ceramic teapot, 49.99 EUR, <slug>@example.com", "stage": 4, "facts": "13 ACTIVITY_TASK_COMPLETED {item: Ceramic teapot, total: 49.99, currency: EUR, customer}" },
+    { "text": "Claude step 2 done: wants issue_refund (A-1001, 49.99, \"item arrived broken\")", "stage": 5, "facts": "19 ACTIVITY_TASK_COMPLETED deferred issue_refund {amount: 49.99, order_id: A-1001, reason: item arrived broken}" },
+    { "text": "Approved by manager@shop.example (a validated Update)", "stage": 6, "facts": "26/27 WORKFLOW_EXECUTION_UPDATE_ACCEPTED/COMPLETED review(toolu_d1afa0cb_02, true, manager@shop.example) -> approved" },
+    { "text": "issue_refund scheduled, ID tool-toolu_d1afa0cb_02 (also the receipt number)", "stage": 7, "facts": "28 ACTIVITY_TASK_SCHEDULED issue_refund id=tool-toolu_d1afa0cb_02 (the idempotency_key in 30)" },
+    { "text": "issue_refund done: refund R-0cb_02", "stage": 7, "facts": "30 ACTIVITY_TASK_COMPLETED {refund_id: R-0cb_02}" },
+    { "text": "Claude step 3 done: wants email_customer", "stage": 8, "facts": "36 ACTIVITY_TASK_COMPLETED deferred email_customer" },
+    { "text": "email_customer done", "stage": 8, "facts": "42 ACTIVITY_TASK_COMPLETED {to, subject, body, idempotency_key}" },
+    { "text": "Claude step 4 done: \"Done. Refunded 49.99 EUR for order A-1001 (refund R-0cb_02) and emailed <slug>@example.com.\"", "stage": 8, "facts": "48 ACTIVITY_TASK_COMPLETED result" },
+    { "text": "Workflow completed", "stage": 8, "facts": "52 WORKFLOW_EXECUTION_COMPLETED" }
+  ],
+  "retry": {
+    "about": "A retried Activity after a crash shows one extra line (facts.md §3: 'After a retry, only the last attempt shows: one ACTIVITY_TASK_STARTED attempt=2 line'); GAME_SPEC §3 'Retries'. {what} is 'Claude step N' or the tool's name.",
+    "text": "{what} started again (attempt {n})"
+  }
+}

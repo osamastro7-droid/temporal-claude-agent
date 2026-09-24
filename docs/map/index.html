@@ -38,9 +38,10 @@
 <main class="wrap">
   <header class="head">
     <h1 id="page-title" class="title">The refund that can’t happen twice</h1>
+    <p id="lede" class="lede"></p>
   </header>
 
-  <section id="game" class="game">
+  <section id="game" class="game" data-scene="start">
     <div class="play">
       <div class="stage">
         <canvas id="cv" class="cv" width="1920" height="1080" aria-hidden="true"></canvas>
@@ -48,10 +49,10 @@
       </div>
 
       <form id="nameform" class="nameform" autocomplete="off" novalidate>
-        <label id="name-label" for="name-input"></label>
+        <label id="name-label" class="name-label" for="name-input"></label>
         <div class="name-row">
           <input id="name-input" name="player" type="text" maxlength="40" autocomplete="off" spellcheck="false" autocapitalize="words" aria-describedby="name-why name-privacy">
-          <button id="name-start" type="submit" disabled></button>
+          <button id="name-start" type="submit" class="btn primary" disabled></button>
         </div>
         <p id="name-why" class="why" aria-live="polite"></p>
         <label class="check"><input id="name-remember" type="checkbox"> <span id="name-remember-label"></span></label>
@@ -59,44 +60,58 @@
       </form>
 
       <div id="controls" class="controls" role="group" hidden>
-        <div class="ctl"><button id="btn-action" type="button" class="primary" aria-disabled="true" aria-describedby="why-action"></button><button id="btn-alt" type="button" aria-disabled="true" aria-describedby="why-action" hidden></button><span id="why-action" class="why"></span></div>
-        <div class="ctl"><button id="btn-plug" type="button" class="plug" aria-pressed="false" aria-disabled="true" aria-describedby="why-plug"></button><span id="why-plug" class="why"></span></div>
-        <div class="ctl toggles">
-          <button id="btn-pause" type="button" aria-pressed="false"></button>
-          <button id="btn-sound" type="button" aria-pressed="false"></button>
-          <button id="btn-step" type="button" aria-pressed="false"></button>
+        <div class="ctl ctl-act"><div class="btns"><button id="btn-action" type="button" class="btn primary" aria-disabled="true" aria-describedby="why-action"></button><button id="btn-alt" type="button" class="btn" aria-disabled="true" aria-describedby="why-action" hidden></button></div><p id="why-action" class="why"></p></div>
+        <div class="ctl ctl-plug"><div class="btns"><button id="btn-plug" type="button" class="btn plug" aria-pressed="false" aria-disabled="true" aria-describedby="why-plug"></button></div><p id="why-plug" class="why"></p></div>
+        <div id="toggles" class="ctl toggles" role="group">
+          <button id="btn-pause" type="button" class="btn toggle" aria-pressed="false"></button>
+          <button id="btn-sound" type="button" class="btn toggle" aria-pressed="false"></button>
+          <button id="btn-step" type="button" class="btn toggle" aria-pressed="false"></button>
+          <button id="btn-reduced" type="button" class="btn toggle" aria-pressed="false"></button>
         </div>
       </div>
 
       <div id="endbar" class="controls endbar" role="group" hidden>
-        <button id="btn-again" type="button" class="primary"></button>
-        <button id="btn-rename" type="button"></button>
-        <button id="btn-break" type="button"></button>
+        <div class="btns">
+          <button id="btn-again" type="button" class="btn primary"></button>
+          <button id="btn-rename" type="button" class="btn"></button>
+          <button id="btn-break" type="button" class="btn plug"></button>
+        </div>
       </div>
 
-      <p id="status" class="status" role="status"></p>
-    </div>
-
-    <div class="side">
       <nav id="rail" class="rail" aria-labelledby="rail-label">
         <h2 id="rail-label" class="small"></h2>
         <ol></ol>
       </nav>
-      <aside id="panel" class="panel">
+
+      <p id="status" class="status" role="status"></p>
+    </div>
+
+    <aside id="panel" class="panel">
+      <div class="now-box">
         <p class="label" id="p-now-label"></p>
         <p id="p-now" class="now"></p>
-        <p class="label" id="p-if-label"></p>
-        <p id="p-if"></p>
-        <p id="p-proof" class="note"></p>
-        <p id="p-note"></p>
-        <p id="p-retry-note" class="note"></p>
-        <table id="p-retry" class="retry" hidden><thead></thead><tbody></tbody></table>
+      </div>
+      <div class="if-box">
+        <p class="label red" id="p-if-label"></p>
+        <p id="p-if" class="if"></p>
+      </div>
+      <p id="p-note" class="outcome"></p>
+      <p id="p-retry-note" class="note"></p>
+      <table id="p-retry" class="retry" hidden><thead></thead><tbody></tbody></table>
+      <p id="p-proof" class="proof"></p>
+      <div class="book-box">
         <h3 id="p-book-label" class="small indigo"></h3>
         <ol id="p-book" class="book"></ol>
+      </div>
+      <div class="history-box">
         <h3 id="p-history-label" class="small"></h3>
         <ol id="p-history" class="history"></ol>
-      </aside>
-    </div>
+      </div>
+      <div class="keys-box">
+        <h3 id="keys-label" class="small"></h3>
+        <dl id="keys" class="keys"></dl>
+      </div>
+    </aside>
   </section>
 
   <div id="lower" class="lower">

@@ -10,12 +10,15 @@
 //   #cv            the canvas (aria-hidden)        #hotspots   absolutely positioned hotspot layer over it
 //   #nameform      form: #name-input, #name-remember, #name-start, #name-why (reason), #name-privacy
 //   #controls      #btn-action + #btn-alt (Reject next to Approve) + #why-action (reason or note),
-//                  #btn-plug + #why-plug, #btn-pause, #btn-sound, #btn-step
+//                  #btn-plug + #why-plug, #toggles: #btn-pause, #btn-sound, #btn-step, #btn-reduced
 //   #endbar        #btn-again, #btn-rename, #btn-break      #status   role=status: the current caption
 //   #rail          nav > ol (Shop chip, chips 1-9)          #panel    #p-now, #p-if, #p-proof, #p-note,
 //                  #p-retry-note, #p-retry (table: thead > tr, tbody), #p-book, #p-history
 //   #lower         #sec-cases, #sec-findings, #sec-proven   #footer   #footer-text, #footer-lic
 //   #page-title    the h1 (its markup text is the no-JS fallback; set from CONTENT.html.title)
+//   #lede          the line under the h1 (CONTENT.html.lede)     #keys   dl: the keyboard legend (CONTENT.html.ui.keys)
+//   #game[data-scene], <html>[data-reduced]: set by UI.sync for map.css (the rail and the control bar hide on
+//                  the start card; the page's own motion stops under reduced motion, toggle or media query).
 // Everything is written with textContent / DOM APIs; never innerHTML (GAME_SPEC §9).
 // Coordinates: screen = logical 1920x1080 (story.js SCHEMAS); css px from the canvas rect.
 //
@@ -45,15 +48,20 @@ window.UI = (() => {
   function init(h) {
     act = h.act; cv = $('cv');
     const B = T().buttons, A = T().aria;
-    text($('page-title'), T().title);
+    const U = T().ui ?? {};
+    text($('page-title'), T().title); text($('lede'), T().lede ?? '');
     for (const [id, k] of [['game', 'game'], ['controls', 'controls'], ['endbar', 'endbar'], ['panel', 'panel'], ['sec-cases', 'cases'], ['sec-findings', 'findings'], ['sec-proven', 'proven']]) attr($(id), 'aria-label', A[k]);
-    text($('btn-pause'), B.pause); text($('btn-sound'), B.sound); text($('btn-step'), B.stepMode);
+    if (U.toggles) attr($('toggles'), 'aria-label', U.toggles);
+    text($('btn-pause'), B.pause); text($('btn-sound'), B.sound); text($('btn-step'), B.stepMode); text($('btn-reduced'), U.reduced ?? '');
+    text($('keys-label'), U.keysLabel ?? '');
+    $('keys').replaceChildren(...(U.keys ?? []).flatMap(([k, what]) => { const dt = document.createElement('dt'), dd = document.createElement('dd'), kb = document.createElement('kbd'); kb.textContent = k; dt.append(kb); dd.textContent = what; return [dt, dd]; }));
     text($('btn-again'), B.playAgain); text($('btn-rename'), B.changeName); text($('btn-break'), B.tryBreak);
     const bind = (id, fallback) => { const el = $(id); el.addEventListener('click', () => { if (isOff(el)) return; const a = el.dataset.act || fallback; if (a) act(a); }); };
     bind('btn-action'); bind('btn-alt'); bind('btn-plug', 'plug');
     $('btn-pause').addEventListener('click', () => act('pause'));
     $('btn-sound').addEventListener('click', () => act('sound'));
     $('btn-step').addEventListener('click', () => act('step'));
+    $('btn-reduced').addEventListener('click', () => act('reduced'));   // runtime toggles G.settings.reduced (REQUEST runtime.js)
     $('btn-again').addEventListener('click', () => act('again'));
     $('btn-rename').addEventListener('click', () => act('rename'));
     $('btn-break').addEventListener('click', () => act('break'));
@@ -68,12 +76,13 @@ window.UI = (() => {
     // keys (GAME_SPEC §2): letters are ignored while a text field has focus; Space and Enter are left to
     // any focused control (a button, the checkbox, a link) so they keep their own meaning
     document.addEventListener('keydown', e => {
-      if (e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented) return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented || e.isComposing) return;
       const t = e.target instanceof Element ? e.target : null, tag = t ? t.tagName : '';
       const textEntry = !!t && (t.isContentEditable || tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && !/^(checkbox|radio|button|submit|reset)$/i.test(t.type)));
       if (textEntry) return;
       const control = !!t && (/^(INPUT|BUTTON|A|SELECT|TEXTAREA|SUMMARY)$/.test(tag) || t.hasAttribute('tabindex'));
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      if (e.repeat && k !== ' ') { if (k === 'p' || k === 'Enter' && !control) e.preventDefault(); return; }   // a held key acts once
       if (k === 'p') { const b = $('btn-plug'); if (!b.closest('[hidden]') && !isOff(b)) act(b.dataset.act || 'plug'); e.preventDefault(); }
       else if (k === 'a') act('approve');
       else if (k === 'r') act('reject');
@@ -132,7 +141,9 @@ window.UI = (() => {
   function sync(G, V) {
     const B = T().buttons, D = T().disabled;
     const start = G.scene === 'start', end = G.scene === 'end';
-    $('nameform').hidden = !start; $('controls').hidden = start; $('endbar').hidden = !end;
+    $('nameform').hidden = !start; $('controls').hidden = start || end; $('endbar').hidden = !end;
+    attr($('game'), 'data-scene', G.scene); attr($('game'), 'data-phase', G.worker.phase);
+    attr(document.documentElement, 'data-reduced', G.settings.reduced ? 'true' : 'false');
     const a = V.action, ba = $('btn-action'), alt = $('btn-alt');
     text(ba, B[a.label] ?? a.label); off(ba, !a.enabled); ba.dataset.act = a.act ?? '';
     alt.hidden = !a.alt; if (a.alt) { text(alt, B[a.alt.label] ?? a.alt.label); off(alt, !a.alt.enabled); alt.dataset.act = a.alt.act; } else alt.dataset.act = '';
@@ -141,13 +152,15 @@ window.UI = (() => {
     // pressed = the plug is out (not while he wakes)
     text(bp, dark ? B.unplug : B.plug); pressed(bp, ['pulling', 'dark', 'pushing'].includes(G.worker.phase)); bp.dataset.act = dark ? 'unplug' : 'plug';
     off(bp, !V.plug.ok); text($('why-plug'), V.plug.ok ? '' : D[V.plug.reason] ?? '');
-    pressed($('btn-pause'), G.settings.paused); pressed($('btn-sound'), G.settings.sound); pressed($('btn-step'), G.settings.stepMode);
+    pressed($('btn-pause'), G.settings.paused); pressed($('btn-sound'), G.settings.sound); pressed($('btn-step'), G.settings.stepMode); pressed($('btn-reduced'), G.settings.reduced);
     if (last.caption !== V.caption) { last.caption = V.caption; text($('status'), V.caption); }
     const P = V.panel, Pl = T().panel;
     text($('p-now-label'), Pl.nowLabel); text($('p-now'), P.now); text($('p-if-label'), Pl.ifPlugLabel); text($('p-if'), P.ifPlug); text($('p-proof'), P.proof);
     text($('p-note'), P.note ? P.note.text : ''); text($('p-retry-note'), P.note ? P.note.retryNote : ''); table($('p-retry'), P.note && P.note.table);
     text($('p-book-label'), Pl.notebookLabel); text($('p-history-label'), Pl.historyLabel);
     list($('p-book'), P.notebook); list($('p-history'), P.history);
+    // a box with nothing to say is hidden (its label too); the keyboard legend always shows
+    for (const [sel, empty] of [['.now-box', !P.now], ['.if-box', !P.ifPlug], ['.book-box', !P.notebook.length], ['.history-box', !P.history.length]]) { const el = $('panel').querySelector(sel); if (el.hidden !== empty) el.hidden = empty; }
     rail(G, V.crashes ?? [], start);
     hotspots(V.hotspots);
     focus(G);
@@ -189,8 +202,9 @@ window.UI = (() => {
    * positioned in % of the canvas box. @param {{act: string, box: number[]}[]} list  screen boxes
    */
   function hotspots(list) {
-    const key = JSON.stringify(list.map(h => [h.act, h.box.map(v => Math.round(v))])); if (last.hot === key) return; last.hot = key;
-    const layer = $('hotspots'), r = cv.getBoundingClientRect(), k = r.width / W;
+    const r = cv.getBoundingClientRect(), k = r.width / W;   // css px per screen unit (the 44 px minimum depends on it)
+    const key = JSON.stringify([Math.round(r.width), list.map(h => [h.act, h.box.map(v => Math.round(v))])]); if (last.hot === key) return; last.hot = key;
+    const layer = $('hotspots');
     layer.replaceChildren(...list.map(h => {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'hot'; b.tabIndex = -1; b.setAttribute('aria-hidden', 'true'); b.dataset.act = h.act;
       let [x, y, w, hh] = h.box; const minW = 44 / Math.max(k, 1e-6); if (w < minW) { x -= (minW - w) / 2; w = minW; } if (hh < minW) { y -= (minW - hh) / 2; hh = minW; }
