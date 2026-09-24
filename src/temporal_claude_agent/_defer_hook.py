@@ -19,8 +19,8 @@ ONE_AT_A_TIME = ("Only one tool call can run at a time. Your other tool call is 
                  "Call this tool again after you get that result.")
 
 
-def main() -> None:
-    event = json.load(sys.stdin)
+def decide(event: dict) -> dict:
+    """Return the hookSpecificOutput for one PreToolUse event (and record the paused call)."""
     tool_use_id = str(event.get("tool_use_id") or "")
     output = {"hookEventName": "PreToolUse", "permissionDecision": "defer"}
     answered = set(os.environ.get("TCA_ANSWERED_IDS", "").split())
@@ -42,7 +42,11 @@ def main() -> None:
     if log:  # debugging aid: one line per decision
         with open(log, "a") as handle:
             handle.write(f"{tool_use_id} {output['permissionDecision']}\n")
-    print(json.dumps({"hookSpecificOutput": output}))
+    return output
+
+
+def main() -> None:
+    print(json.dumps({"hookSpecificOutput": decide(json.load(sys.stdin))}))
 
 
 if __name__ == "__main__":

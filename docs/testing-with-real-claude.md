@@ -10,7 +10,7 @@ scenarios run in CI with a stand-in model; this guide runs them with real Claude
 git clone https://github.com/osamastro7-droid/temporal-claude-agent && cd temporal-claude-agent
 uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e ".[dev]"
-pytest -v                                    # expect: 12 passed
+pytest -v                                    # expect: 17 passed
 python -m spike.real_matrix --mock           # expect: 8 PASS (stand-in model)
 ```
 

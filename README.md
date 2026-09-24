@@ -10,7 +10,7 @@ they can repeat risky actions. This package runs the agent loop inside a Tempora
 - risky tools wait for a human approval, for minutes or for days
 - progress and cost are visible (Queries, and clear Activity names in the Temporal UI)
 
-**Status: v0.1, a tested prototype.** 12 automated tests, including worker crashes (SIGKILL) and
+**Status: v0.1, a tested prototype.** 17 automated tests, including worker crashes (SIGKILL) and
 the real Claude Code engine running on Temporal with a stand-in model. Real Claude test matrix
 (8 scenarios, 2 runs each): passed on Sonnet 5, Opus 5.5 and Fable 5.1 (16 of 16 each) and on
 Haiku 4.5. Read the limitations below before using it for anything real.
@@ -32,7 +32,7 @@ mindmap
       Approvals through a validated Update
       Refund limit checked in code
     Tested
-      12 automated tests
+      17 automated tests
       3 crash tests kill the worker
       Real Claude on 4 models
       Bedrock mode with a stand-in model
@@ -204,20 +204,34 @@ The demo checks an email address; in production, connect this to your real ident
 
 ## Limitations (v0.1)
 
-1. **It depends on today's engine behavior.** The pause mechanism relies on how the Claude Code
-   engine handles "defer" today, including quirks we work around. A new engine version can change
-   that. The test matrix exists to catch it (tested on engines 2.1.277 and 2.1.280).
+1. **It depends on today's engine behavior.** Pausing uses the PreToolUse "defer" decision, which
+   Anthropic documents ([hooks docs](https://code.claude.com/docs/en/hooks)). Resuming after several
+   pauses in one session relies on engine behavior we tested, including quirks we work around. If a
+   new engine stops honoring "defer", the agent fails closed: durable tools never run inside the
+   engine, the step stops with an error that names the engine version, and a tool call never runs
+   twice ([`tests/test_fail_closed.py`](tests/test_fail_closed.py)). CI runs the test matrix daily
+   against the newest SDK and Claude Code (tested on engines 2.1.277, 2.1.280 and 2.1.281).
 2. **Speed.** Each Claude step starts a new engine process: roughly 1 to 1.5 seconds of overhead
    per step, measured with a stand-in model. Parallel tool calls run one at a time, which costs an
    extra model turn. Model time usually dominates, but this is not built for high volume.
 3. **Only durable tools are durable.** Built-in Claude Code tools (terminal, file edits, web search)
    are off by default. If you turn them on, they run inside the step: after a crash they can run
    again, and Temporal does not record them.
-4. **The conversation lives outside Temporal.** `FileSessionStore` is for development. Production
-   needs a shared, durable store (S3 or a database) that implements `append` and `load`. Every
-   worker must use the same working folder (`cwd`), because the session key includes it.
-5. **Very long agents.** Temporal limits payload size and history length. Continue-As-New is not
-   implemented yet; keep large tool results out of payloads (store a reference instead).
+4. **The conversation lives outside Temporal.** `FileSessionStore` is for development. It passes
+   the six required contracts of the Claude Agent SDK's own `run_session_store_conformance` suite
+   ([`tests/test_session_store.py`](tests/test_session_store.py)). Production needs a shared, durable
+   store: the runner accepts any SDK `SessionStore` (only `append` and `load` are required), and
+   Anthropic's SDK repo has reference S3, Redis and Postgres adapters in
+   [`examples/session_stores`](https://github.com/anthropics/claude-agent-sdk-python/tree/main/examples/session_stores)
+   (Anthropic calls them reference code, not production code). Every worker must use the same
+   working folder (`cwd`), because the session key includes it.
+5. **Very long agents.** Continue-As-New is not implemented yet. Measured with the real agent loop
+   on Temporal Server 1.32 defaults: each tool call adds 12 events and about 3.2 KiB of history, and
+   each tool result is stored twice (as the tool's output and as the next Claude step's input).
+   Temporal suggests Continue-As-New at 4,096 events or 4 MiB: this demo agent reaches it at tool
+   call 342, or after about 41 tool calls with 50 KB results. With small results, the default
+   `max_segments=50` keeps a run well below that. Keep large tool results out of payloads (store a
+   reference instead): by default Temporal rejects any single payload over 2 MiB.
 6. **Test scope.** One demo domain, 8 scenarios, 2 runs per model. Real agents have more tools,
    longer conversations and messier data.
 7. **When not to use it.** For simple tool-calling agents, calling the Claude API directly from
@@ -244,7 +258,7 @@ cd examples && python -m refund_agent.run_demo     # window 3
 ## Tests
 
 ```bash
-pytest -v                                  # 12 tests; needs the `temporal` CLI on PATH
+pytest -v                                  # 17 tests; needs the `temporal` CLI on PATH
 python -m spike.real_matrix --mock         # 8 scenarios on the real engine, stand-in model
 python -m spike.real_matrix --mock-bedrock # the same with the engine in Amazon Bedrock mode
 ```
