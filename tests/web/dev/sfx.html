@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev: sound engine</title>
+<link rel="stylesheet" href="dev.css">
+<!-- Dev harness for docs/map/game/sfx.js (tests/web/dev, not published).
+  sfx-guard.js loads FIRST and counts every AudioContext / webkitAudioContext constructed, so a test can prove
+  that no context exists before SFX_LIVE.enable() (GAME_SPEC §8). Then core.js (the kernels' rng/hash/noise1)
+  and sfx.js. sfx-dev.js exposes window.__dev:
+    ready, contexts()                    how many live AudioContexts were constructed so far
+    renderOne(type, opts, len)           OfflineAudioContext render of one event -> {peakDb, rmsDb, len}
+    renderSeq()                          the scripted sequence of every event type (with a crash) -> report
+  The #on button calls SFX_LIVE.enable() inside a real click (the live-context test). -->
+<button id="on">Sound on</button>
+<pre id="info"></pre>
+<script src="sfx-guard.js"></script>
+<script src="/temporal-claude-agent/map/engine/core.js"></script>
+<script src="/temporal-claude-agent/map/game/sfx.js"></script>
+<script src="sfx-dev.js"></script>

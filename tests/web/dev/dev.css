@@ -1,0 +1,3 @@
+body { margin: 0; background: #1d1c1a; color: #ddd; font: 12px ui-monospace, Menlo, monospace; }
+canvas { display: block; width: 100vw; height: auto; max-width: 100%; }
+pre { margin: 4px 8px; }

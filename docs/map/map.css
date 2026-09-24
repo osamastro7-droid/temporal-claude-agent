@@ -1,0 +1,355 @@
+/* docs/map/map.css: the paper look around the pencil game (GAME_SPEC §2 "map.css", §2 "Layout").
+   System fonts only (CSP font-src none). Colours are the film's (kit.js COL): paper, graphite, indigo =
+   Temporal only, red = crash, green = done once. Borders, rules and marks are pencil drawings as data: SVGs
+   (img-src allows data:), declared once below as --i-* (generated; edit the paths there). Tested at 375 / 768 / 1440. */
+:root {
+  --i-box: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M4 6C50 3 150 5 196 4C197 20 195 42 196 56C150 57 50 55 4 56C3 40 5 20 4 5Z' fill='none'/%3E%3Cpath d='M2 5C60 2 140 5 198 3C196 22 198 40 196 58C130 58 60 55 3 57C4 38 2 22 4 2' stroke='%232f2b27' stroke-width='1.7' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M7 3C70 5 130 2 195 6C197 24 195 44 198 55C140 57 70 58 5 58C3 40 6 20 5 8' stroke='%232f2b27' stroke-opacity='.4' stroke-width='1.1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-box-fill: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M4 6C50 3 150 5 196 4C197 20 195 42 196 56C150 57 50 55 4 56C3 40 5 20 4 5Z' fill='%232f2b27'/%3E%3Cpath d='M2 5C60 2 140 5 198 3C196 22 198 40 196 58C130 58 60 55 3 57C4 38 2 22 4 2' stroke='%232f2b27' stroke-width='1.7' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M7 3C70 5 130 2 195 6C197 24 195 44 198 55C140 57 70 58 5 58C3 40 6 20 5 8' stroke='%232f2b27' stroke-opacity='.4' stroke-width='1.1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-box-soft: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M4 6C50 3 150 5 196 4C197 20 195 42 196 56C150 57 50 55 4 56C3 40 5 20 4 5Z' fill='none'/%3E%3Cpath d='M2 5C60 2 140 5 198 3C196 22 198 40 196 58C130 58 60 55 3 57C4 38 2 22 4 2' stroke='%236b645a' stroke-width='1.4' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none' stroke-dasharray='5 4'/%3E%3Cpath d='M7 3C70 5 130 2 195 6C197 24 195 44 198 55C140 57 70 58 5 58C3 40 6 20 5 8' stroke='%236b645a' stroke-opacity='.4' stroke-width='1.1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none' stroke-dasharray='5 4'/%3E%3C/svg%3E");
+  --i-box-red: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M4 6C50 3 150 5 196 4C197 20 195 42 196 56C150 57 50 55 4 56C3 40 5 20 4 5Z' fill='none'/%3E%3Cpath d='M2 5C60 2 140 5 198 3C196 22 198 40 196 58C130 58 60 55 3 57C4 38 2 22 4 2' stroke='%23b42d1a' stroke-width='1.7' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M7 3C70 5 130 2 195 6C197 24 195 44 198 55C140 57 70 58 5 58C3 40 6 20 5 8' stroke='%23b42d1a' stroke-opacity='.4' stroke-width='1.1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-box-red-fill: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M4 6C50 3 150 5 196 4C197 20 195 42 196 56C150 57 50 55 4 56C3 40 5 20 4 5Z' fill='%23b42d1a'/%3E%3Cpath d='M2 5C60 2 140 5 198 3C196 22 198 40 196 58C130 58 60 55 3 57C4 38 2 22 4 2' stroke='%23b42d1a' stroke-width='1.7' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M7 3C70 5 130 2 195 6C197 24 195 44 198 55C140 57 70 58 5 58C3 40 6 20 5 8' stroke='%23b42d1a' stroke-opacity='.4' stroke-width='1.1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-box-input: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M4 6C50 3 150 5 196 4C197 20 195 42 196 56C150 57 50 55 4 56C3 40 5 20 4 5Z' fill='%23faf7ef'/%3E%3Cpath d='M2 5C60 2 140 5 198 3C196 22 198 40 196 58C130 58 60 55 3 57C4 38 2 22 4 2' stroke='%232f2b27' stroke-width='1.7' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M7 3C70 5 130 2 195 6C197 24 195 44 198 55C140 57 70 58 5 58C3 40 6 20 5 8' stroke='%232f2b27' stroke-opacity='.4' stroke-width='1.1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-sheet: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400' preserveAspectRatio='none'%3E%3Cpath d='M3 4C100 2 300 4 397 3C398 100 396 300 397 397C300 398 100 396 3 397C2 300 4 100 3 4Z' fill='none'/%3E%3Cpath d='M1 4C120 1 280 4 399 2C397 110 399 290 397 399C290 397 110 399 2 397C3 280 1 120 3 1' stroke='%236b645a' stroke-width='1.5' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M5 2C130 4 270 1 396 5C398 120 396 280 398 396C280 398 120 397 4 398C2 270 5 130 4 6' stroke='%236b645a' stroke-opacity='.35' stroke-width='1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-sheet-hi: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400' preserveAspectRatio='none'%3E%3Cpath d='M3 4C100 2 300 4 397 3C398 100 396 300 397 397C300 398 100 396 3 397C2 300 4 100 3 4Z' fill='%23faf7ef'/%3E%3Cpath d='M1 4C120 1 280 4 399 2C397 110 399 290 397 399C290 397 110 399 2 397C3 280 1 120 3 1' stroke='%236b645a' stroke-width='1.5' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M5 2C130 4 270 1 396 5C398 120 396 280 398 396C280 398 120 397 4 398C2 270 5 130 4 6' stroke='%236b645a' stroke-opacity='.35' stroke-width='1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-sheet-frame: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400' preserveAspectRatio='none'%3E%3Cpath d='M3 4C100 2 300 4 397 3C398 100 396 300 397 397C300 398 100 396 3 397C2 300 4 100 3 4Z' fill='none'/%3E%3Cpath d='M1 4C120 1 280 4 399 2C397 110 399 290 397 399C290 397 110 399 2 397C3 280 1 120 3 1' stroke='%232f2b27' stroke-width='1.8' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M5 2C130 4 270 1 396 5C398 120 396 280 398 396C280 398 120 397 4 398C2 270 5 130 4 6' stroke='%232f2b27' stroke-opacity='.35' stroke-width='1' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-ring: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 44'%3E%3Cpath d='M22 4C33 4 40 11 40 22S33 40 22 40 4 33 4 22 11 4 22 4Z' fill='none'/%3E%3Cpath d='M20 4.5C32 3 40.5 11 40 22.5 39.5 33 32 40.5 21.5 40 10.5 39.5 3.5 32 4 21 4.5 11 12 4 24 4.8' stroke='%232f2b27' stroke-width='1.8' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-ring-fill: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 44'%3E%3Cpath d='M22 4C33 4 40 11 40 22S33 40 22 40 4 33 4 22 11 4 22 4Z' fill='%232f2b27'/%3E%3Cpath d='M20 4.5C32 3 40.5 11 40 22.5 39.5 33 32 40.5 21.5 40 10.5 39.5 3.5 32 4 21 4.5 11 12 4 24 4.8' stroke='%232f2b27' stroke-width='1.8' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-ring-red: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 44'%3E%3Cpath d='M22 4C33 4 40 11 40 22S33 40 22 40 4 33 4 22 11 4 22 4Z' fill='none'/%3E%3Cpath d='M20 4.5C32 3 40.5 11 40 22.5 39.5 33 32 40.5 21.5 40 10.5 39.5 3.5 32 4 21 4.5 11 12 4 24 4.8' stroke='%23b42d1a' stroke-width='1.8' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-under: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 12' preserveAspectRatio='none'%3E%3Cpath d='M2 7C40 4 80 9 120 6S220 4 298 6' stroke='%232f2b27' stroke-width='2' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M8 9C60 7 150 10 230 7S280 8 294 8' stroke='%232f2b27' stroke-opacity='.4' stroke-width='1.2' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-under-indigo: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 12' preserveAspectRatio='none'%3E%3Cpath d='M2 7C40 4 80 9 120 6S220 4 298 6' stroke='%232c3ea6' stroke-width='2' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Cpath d='M8 9C60 7 150 10 230 7S280 8 294 8' stroke='%232c3ea6' stroke-opacity='.4' stroke-width='1.2' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-rule: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 6' preserveAspectRatio='none'%3E%3Cpath d='M1 3C80 2 160 4 240 3S360 2 399 3.5' stroke='%236b645a' stroke-width='1.3' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-rule-indigo: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 6' preserveAspectRatio='none'%3E%3Cpath d='M1 3C80 2 160 4 240 3S360 2 399 3.5' stroke='%232c3ea6' stroke-width='1.3' vector-effect='non-scaling-stroke' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E");
+  --i-check-green: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M3.5 10.5C5 12 6.5 13.5 8 16 10.5 10.5 13.5 6.5 17 3.5' stroke='%231f7a43' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --i-tick-off: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cpath d='M3 4.5C8 3.5 13 4 18 3.8 18.5 9 18 14 18.4 18.5 13 18.2 8 18.6 3.4 18.2 3.8 13 3.2 9 3.4 3.5' stroke='%232f2b27' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  --i-tick-on: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cpath d='M3 4.5C8 3.5 13 4 18 3.8 18.5 9 18 14 18.4 18.5 13 18.2 8 18.6 3.4 18.2 3.8 13 3.2 9 3.4 3.5' stroke='%232f2b27' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3Cpath d='M5.5 11.5C7 13 8 14 9 16 11 11 14 7.5 18.5 4' stroke='%232f2b27' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --i-tick-on-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 22 22'%3E%3Cpath d='M3 4.5C8 3.5 13 4 18 3.8 18.5 9 18 14 18.4 18.5 13 18.2 8 18.6 3.4 18.2 3.8 13 3.2 9 3.4 3.5' stroke='%23f3eee2' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3Cpath d='M5.5 11.5C7 13 8 14 9 16 11 11 14 7.5 18.5 4' stroke='%23f3eee2' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --i-zig-red: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 8'%3E%3Cpath d='M1 6 4 2 7 6 10 2 13 6' fill='none' stroke='%23b42d1a' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E");
+  --i-plug-red: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='%23b42d1a' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8.5 3.5v4M15.5 3.5v4'/%3E%3Cpath d='M6 7.8C9.5 7.3 14.5 7.5 18 7.9 18.2 11 17.5 13.5 15 15 13 16 11 16 9 15 6.5 13.6 5.8 11 6 7.8Z'/%3E%3Cpath d='M12 16c.2 2.5-.6 4-3 4.5'/%3E%3C/g%3E%3C/svg%3E");
+  --i-plug-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='%23f3eee2' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8.5 3.5v4M15.5 3.5v4'/%3E%3Cpath d='M6 7.8C9.5 7.3 14.5 7.5 18 7.9 18.2 11 17.5 13.5 15 15 13 16 11 16 9 15 6.5 13.6 5.8 11 6 7.8Z'/%3E%3Cpath d='M12 16c.2 2.5-.6 4-3 4.5'/%3E%3C/g%3E%3C/svg%3E");
+  --i-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .18 0 0 0 0 .17 0 0 0 0 .15 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------- tokens: the film's paper world (kit.js COL) ---------- */
+:root {
+  --paper: #f3eee2;
+  --paper-hi: #faf7ef;     /* a sheet lying on the paper */
+  --paper-lo: #ebe4d3;
+  --graphite: #2f2b27;     /* ink: 12:1 on paper */
+  --graphite-2: #5b544b;   /* secondary text: 6.4:1 on paper */
+  --rule: #cfc6b2;
+  --indigo: #2c3ea6;       /* Temporal only: its notebook, its history */
+  --red: #b42d1a;          /* crash, wrong (a touch darker than the film's #c3321d for AA text) */
+  --green: #1a6b3a;        /* done once (darker than the film's #23874a for AA text) */
+  --gap: 16px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* the film's system hand font (core.js HAND_FONT), for headings only; Segoe Print reads better than Script */
+  --hand: "Bradley Hand", "Segoe Print", "Chalkboard SE", "Chalkboard", "Comic Sans MS", cursive;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; background: var(--paper); }
+body {
+  margin: 0; color: var(--graphite); font: 400 1rem/1.55 var(--font);
+  background: var(--paper) var(--i-grain); overflow-x: hidden;
+}
+.wrap { width: 100%; max-width: 1440px; margin: 0 auto; padding: 20px 16px 16px; }
+h1, h2, h3 { line-height: 1.2; text-wrap: balance; }
+a { color: var(--graphite); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--graphite); text-decoration-thickness: 2px; }
+.indigo { color: var(--indigo); }
+.red { color: var(--red); }
+.small { font: 700 .78rem/1.3 var(--font); text-transform: uppercase; letter-spacing: .09em; color: var(--graphite-2); margin: 0 0 8px; }
+.note, .why { color: var(--graphite-2); font-size: .92rem; margin: 0; }
+.why:empty, .note:empty, p:empty { display: none; }
+/* ...except the live regions: an empty live region must stay in the accessibility tree, or the next text
+   written into it (every caption after a gap, "The server crashes.") is not announced by several readers */
+.status:empty { display: block; }
+#name-why:empty { display: block; height: 0; margin-top: -10px; }         /* -10px cancels the name form's grid gap */
+#why-action:empty { display: block; height: 0; margin-top: -6px; }        /* -6px cancels the .ctl grid gap */
+[hidden] { display: none !important; }
+kbd { font: 600 .82rem/1 var(--mono); }
+
+/* ---------- the header ---------- */
+.head { margin: 4px 0 20px; }
+.title {
+  margin: 0; font: 700 clamp(1.7rem, 4.2vw, 2.7rem)/1.1 var(--hand); letter-spacing: -.005em;
+  display: inline-block; padding-bottom: 10px; background: var(--i-under) no-repeat left bottom / 100% 12px;
+}
+.lede { margin: 10px 0 0; max-width: 64ch; color: var(--graphite-2); font-size: 1.05rem; }
+
+/* ---------- the game block ---------- */
+.game { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
+.play { min-width: 0; width: 100%; max-width: 1200px; margin: 0 auto; }
+.stage {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; background: var(--paper);
+  box-shadow: 0 1px 1px rgba(47, 43, 39, .06), 0 14px 30px -18px rgba(47, 43, 39, .45);
+}
+.stage::after { content: ""; position: absolute; inset: -3px; pointer-events: none; background: var(--i-sheet-frame) no-repeat 0 0 / 100% 100%; }
+.cv { display: block; width: 100%; height: 100%; }
+.hotspots { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.hot { position: absolute; pointer-events: auto; background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer; }
+.hot:focus { outline: none; }
+
+/* ---------- buttons: boxes drawn in pencil ---------- */
+button { font: inherit; color: inherit; }
+/* no native tap flash (a light-blue fill over the paper, even on a dashed aria-disabled button): :active and
+   :focus-visible give the feedback */
+button, .hot { -webkit-tap-highlight-color: transparent; }
+.btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 48px; min-width: 48px; padding: 10px 20px; border: 0; border-radius: 3px;
+  background: var(--i-box) no-repeat 0 0 / 100% 100%; color: var(--graphite);
+  font: 650 1rem/1.2 var(--font); cursor: pointer; touch-action: manipulation; text-align: center;
+  transition: transform .12s ease, background-color .12s ease;
+}
+/* hover only where a pointer really hovers: on a touch screen :hover sticks after a tap */
+@media (hover: hover) {
+  .btn:hover:not(:disabled):not([aria-disabled="true"]) { background-color: var(--paper-lo); transform: translateY(-1px); }
+  .btn.primary:hover:not(:disabled):not([aria-disabled="true"]) { background-color: transparent; filter: brightness(1.25); }
+  .btn.toggle:hover { background-image: var(--i-box-soft); }
+  .rail .chip:hover .chip-n { background-color: var(--paper-lo); border-radius: 50%; }
+  .rail li:first-child .chip:hover .chip-n { border-radius: 3px; }
+}
+.btn:active:not(:disabled):not([aria-disabled="true"]) { transform: translateY(1px); }
+.btn.primary { background-image: var(--i-box-fill); color: var(--paper); }
+.btn.plug { background-image: var(--i-box-red); color: var(--red); }
+.btn.plug::before { content: ""; width: 22px; height: 22px; flex: none; background: var(--i-plug-red) no-repeat center / contain; }
+.btn.plug[aria-pressed="true"] { background-image: var(--i-box-red-fill); color: var(--paper); }
+.btn.plug[aria-pressed="true"]::before { background-image: var(--i-plug-paper); }
+#btn-break.plug::before { display: none; }
+/* disabled: a dashed, lighter box; the reason is written next to it (ui.js) */
+.btn:disabled, .btn[aria-disabled="true"],
+.btn.primary:disabled, .btn.primary[aria-disabled="true"],
+.btn.plug[aria-disabled="true"]:not([aria-pressed="true"]) { background-image: var(--i-box-soft); color: var(--graphite-2); cursor: not-allowed; }
+.btn.plug[aria-disabled="true"]:not([aria-pressed="true"])::before { opacity: .5; filter: grayscale(1); }
+/* a live action gets a small nudge when it becomes available (not under reduced motion) */
+.btn.primary[aria-disabled="false"] { animation: nudge .5s ease-out 1; }
+@keyframes nudge { 0% { transform: rotate(0); } 30% { transform: rotate(-1.4deg) scale(1.03); } 65% { transform: rotate(1deg); } 100% { transform: rotate(0); } }
+/* toggles: a pencil tick box before the words; aria-pressed ticks it */
+.btn.toggle { min-height: 44px; padding: 8px 14px 8px 12px; font-weight: 550; font-size: .95rem; background-image: none; }
+.btn.toggle::before { content: ""; width: 22px; height: 22px; flex: none; background: var(--i-tick-off) no-repeat center / contain; }
+.btn.toggle[aria-pressed="true"]::before { background-image: var(--i-tick-on); }
+
+/* focus: graphite (indigo is Temporal's), always visible */
+:focus { outline: none; }
+:focus-visible { outline: 2.5px solid var(--graphite); outline-offset: 3px; border-radius: 4px; }
+.btn.primary:focus-visible, .btn.plug[aria-pressed="true"]:focus-visible { outline-offset: 4px; }
+
+/* ---------- the control bar ---------- */
+.controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 24px; align-items: start; margin-top: 14px; }
+.ctl { display: grid; gap: 6px; min-width: 0; }
+.btns { display: flex; flex-wrap: wrap; gap: 10px; }
+.ctl-act .btn { min-width: 132px; }
+.ctl-plug { justify-items: end; text-align: right; }
+.ctl-plug .why { max-width: 32ch; }
+.why { font-style: italic; }
+/* the settings row: under the rail (outside the control bar, so it also shows on the start and end cards) */
+.toggles { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 12px; padding-top: 8px; background: var(--i-rule) no-repeat left top / 100% 5px; }
+/* the panel's prediction and outcome repeated under the plug: only while the panel is below the canvas */
+.ctl-if { grid-column: 1 / -1; display: grid; gap: 8px; }
+.ctl-if .label { font: 700 .74rem/1.3 var(--font); text-transform: uppercase; letter-spacing: .09em; color: var(--red); }
+.ctl-if .if { margin: 0; font-size: .92rem; padding-left: 12px; background: linear-gradient(var(--red), var(--red)) no-repeat 0 3px / 2px calc(100% - 6px); }
+.ctl-if .outcome { margin: 0; font-size: .92rem; padding: 8px 12px 8px 36px; background: var(--paper-lo) var(--i-zig-red) no-repeat 12px 14px / 16px 9px; border-radius: 3px; }
+.endbar { grid-template-columns: minmax(0, 1fr); }
+
+/* ---------- the name form (the start card) ---------- */
+.nameform { margin-top: 20px; display: grid; gap: 10px; max-width: 600px; }
+.name-label { font: 700 clamp(1.4rem, 3vw, 1.8rem)/1.2 var(--hand); }
+.name-row { display: flex; gap: 12px; }
+.name-row input {
+  flex: 1 1 auto; min-width: 0; min-height: 52px; padding: 10px 16px; border: 0; border-radius: 3px;
+  font: 500 max(16px, 1.15rem)/1.3 var(--font); color: var(--graphite);
+  background: var(--i-box-input) no-repeat 0 0 / 100% 100%;
+}
+.name-row input:focus-visible { outline-offset: 2px; }
+.name-row .btn { min-width: 110px; min-height: 52px; }
+.check { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; justify-self: start; }
+.check input { width: 22px; height: 22px; margin: 0; accent-color: var(--graphite); cursor: pointer; }
+
+/* the caption, repeated for screen readers (the drawn caption is on the canvas) */
+.status { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+/* ---------- the stage rail: numbered rings on a pencil line ---------- */
+.rail { margin-top: 14px; }
+.game[data-scene="start"] .rail { display: none; }
+.rail ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 10px 4px; }
+.rail li { position: relative; display: flex; justify-content: center; min-width: 0; }
+.rail li + li::before { content: ""; position: absolute; top: 22px; right: calc(50% + 24px); width: calc(100% - 44px); height: 5px; background: var(--i-rule) no-repeat 0 0 / 100% 100%; }
+.rail .chip {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 48px; max-width: 100%;
+  padding: 0 2px 4px; border: 0; background: none; cursor: pointer; color: var(--graphite); font: inherit;
+}
+.rail .chip-n {
+  display: grid; place-items: center; width: 44px; height: 44px; flex: none;
+  background: var(--i-ring) no-repeat center / 100% 100%; font: 700 1.05rem/1 var(--hand);
+}
+.rail li:first-child .chip-n { width: auto; min-width: 58px; padding: 0 10px; background-image: var(--i-box); font: 700 .95rem/1 var(--font); }
+.rail .chip-t { font-size: .78rem; line-height: 1.25; color: var(--graphite-2); text-align: center; overflow-wrap: anywhere; }
+.rail .chip[aria-current] .chip-n { background-image: var(--i-ring-fill); color: var(--paper); }
+.rail li:first-child .chip[aria-current] .chip-n { background-image: var(--i-box-fill); }
+.rail .chip[aria-current] .chip-t { color: var(--graphite); font-weight: 650; }
+.rail .chip-crash:empty { display: none; }
+.rail .chip-crash { color: var(--red); font-size: .74rem; font-weight: 600; line-height: 1.2; display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+/* the small red zigzag above "crashed before / after" */
+.rail .chip-crash::before { content: ""; width: 18px; height: 9px; flex: none; background: var(--i-zig-red) no-repeat center / contain; }
+.rail .chip:focus-visible { outline-offset: 1px; }
+
+/* ---------- the panel: a sheet of notes beside (or under) the canvas ---------- */
+.panel {
+  display: grid; gap: 14px; align-content: start; min-width: 0; padding: 20px 20px 22px;
+  background: var(--i-sheet-hi) no-repeat 0 0 / 100% 100%;
+}
+.panel .label { margin: 0 0 2px; font: 700 .78rem/1.3 var(--font); text-transform: uppercase; letter-spacing: .09em; color: var(--graphite-2); }
+.panel .label.red { color: var(--red); }
+.panel p { margin: 0; }
+.panel .who-box { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding-bottom: 10px; background: var(--i-rule) no-repeat left bottom / 100% 5px; }
+.panel .who-box .label { margin: 0; }
+.panel .who { font: 700 1.3rem/1.2 var(--hand); overflow-wrap: anywhere; min-width: 0; unicode-bidi: isolate; }
+.panel .now { font: 600 1.1rem/1.4 var(--font); }
+.panel .if { padding-left: 12px; background: linear-gradient(var(--red), var(--red)) no-repeat 0 3px / 2px calc(100% - 6px); }
+.panel .outcome { padding: 10px 12px 10px 36px; background: var(--paper-lo) var(--i-zig-red) no-repeat 12px 16px / 16px 9px; border-radius: 3px; }
+.panel .proof { font-size: .86rem; color: var(--graphite-2); padding-top: 10px; background: var(--i-rule) no-repeat left top / 100% 5px; overflow-wrap: anywhere; }
+.retry { border-collapse: collapse; font-size: .86rem; width: 100%; }
+.retry th, .retry td { text-align: left; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.retry th { font-weight: 650; color: var(--graphite-2); }
+.panel ol { margin: 0; padding-left: 1.7em; }
+/* Temporal's notebook: indigo writing on faint ruled lines */
+.book-box .small { padding-bottom: 6px; background: var(--i-under-indigo) no-repeat left bottom / 9.5em 7px; display: inline-block; }
+.panel .book { padding: 2px 0 2px 1.9em; background: repeating-linear-gradient(to bottom, transparent 0 25px, rgba(44, 62, 166, .18) 25px 26px); }
+.panel .book li { color: var(--indigo); font: 500 .92rem/26px var(--mono); }
+.panel .book li::marker { color: rgba(44, 62, 166, .8); }             /* 5.1:1 on the sheet */
+.book-box .note { margin: 2px 0 8px; font-size: .86rem; }
+/* a row Temporal crossed out (reject: issue_refund), struck in its own indigo pencil */
+.panel .book li.struck s { color: rgba(44, 62, 166, .8); text-decoration: line-through 2px rgba(44, 62, 166, .9); }   /* 5.1:1 */
+.panel .history li { font: .82rem/1.45 var(--mono); overflow-wrap: anywhere; margin: 0 0 4px; color: var(--graphite-2); }
+.panel .history li:last-child { color: var(--graphite); font-weight: 600; }
+/* "(nothing is written while it waits for approval)": a note under the step-2 line, not an event (ui.js waitNote) */
+.panel .history li.wait::after { content: attr(data-note); display: block; margin-top: 4px; font: italic 400 .82rem/1.45 var(--font); color: var(--graphite-2); }
+.keys-box { padding-top: 12px; background: var(--i-rule) no-repeat left top / 100% 5px; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; align-items: center; font-size: .9rem; }
+.keys dt { justify-self: start; }
+.keys dd { margin: 0; color: var(--graphite-2); }
+/* P / A / R while "Single-key shortcuts" is off (ui.js keysLegend): struck through, with the word "(off)" */
+.keys dt.off kbd, .keys dd.off > span:first-child { text-decoration: line-through 1.5px; }
+.keys .key-off { font-style: italic; }
+.keys kbd { display: inline-block; min-width: 2.3em; padding: 5px 8px; text-align: center; background: var(--i-box) no-repeat 0 0 / 100% 100%; }
+.game[data-scene="start"] .keys-box { padding-top: 0; background: none; }
+/* hide the keyboard legend on touch-only devices */
+@media (hover: none) and (pointer: coarse) { .keys-box { display: none; } }
+
+/* ---------- lower sections (GAME_SPEC §5) ---------- */
+.lower { margin-top: 56px; display: grid; gap: 44px; }
+.more, .card, .fixes li { min-width: 0; overflow-wrap: break-word; }
+.lower p, .lower li { overflow-wrap: anywhere; }   /* long test names (test_real_engine_...) must wrap at 375 */
+.more h2 {
+  margin: 0 0 14px; font: 700 clamp(1.45rem, 3vw, 1.9rem)/1.2 var(--hand);
+  display: inline-block; padding-bottom: 8px; background: var(--i-under) no-repeat left bottom / 100% 10px;
+}
+.more > p { max-width: 70ch; margin: 0 0 14px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+.card { padding: 18px 20px 20px; background: var(--i-sheet-hi) no-repeat 0 0 / 100% 100%; }
+.card h3 { margin: 0 0 8px; font-size: 1.06rem; }
+.card p { margin: 0; color: var(--graphite); }
+.fixes { margin: 0; padding: 0; list-style: none; display: grid; gap: 14px; max-width: 80ch; }
+.fixes li { display: grid; gap: 4px; padding: 0 0 14px; background: var(--i-rule) no-repeat left bottom / 100% 5px; }
+.fixes li:last-child { background: none; padding-bottom: 0; }
+.fixes p { margin: 0; padding-left: 30px; }
+.fixes p:first-child { background: var(--i-zig-red) no-repeat 2px .5em / 18px 9px; }
+.fixes .fix { color: var(--graphite-2); background: var(--i-check-green) no-repeat 2px .15em / 18px 18px; }
+#sec-proven > p { padding-left: 30px; margin: 0 0 8px; background: var(--i-check-green) no-repeat 2px .15em / 18px 18px; }
+.foot { width: 100%; max-width: 1440px; margin: 0 auto; padding: 0 16px 16px; color: var(--graphite-2); font-size: .9rem; }
+.foot-in { margin-top: 48px; padding-top: 18px; background: var(--i-rule) no-repeat left top / 100% 5px; }
+.foot p { margin: 0 0 8px; max-width: 90ch; }
+.foot a { color: var(--graphite); }
+
+/* ---------- layout: 375 / 768 / 1440 ---------- */
+/* up to 768 the page keeps the 16 px gutter, so the canvas is full width (GAME_SPEC §2 "Layout") */
+@media (min-width: 769px) {
+  .wrap { padding: 28px 24px 20px; }
+  .foot { padding: 0 24px 20px; }
+}
+@media (min-width: 1100px) {
+  /* the rail (and its crash marks) must fit above the fold at 1440x900: a tighter vertical rhythm here. A crash
+     mark adds one line under a stage's name (two lines when a stage crashed both before and after), and the
+     settings row (#toggles) must still end above 900 px (tests/web layout: 1440x900 after crashes) */
+  .wrap { padding: 16px 32px 24px; }
+  .foot { padding: 0 32px 24px; }
+  .controls { margin-top: 12px; }
+  .rail { margin-top: 10px; }
+  .rail .small { margin-bottom: 2px; }
+  .rail .chip { gap: 2px; padding-bottom: 0; position: relative; }
+  .rail .chip-t { line-height: 1.18; }
+  /* the red zigzag sits on the ring's top-right edge (not above the words), so a mark costs one line of height */
+  .rail .chip-crash { line-height: 1.15; gap: 0; }
+  .rail .chip-crash > span { white-space: nowrap; }
+  .rail .chip-crash::before { position: absolute; top: -4px; left: calc(50% + 12px); }
+  /* the reasons sit beside their buttons, not under them, so the bar keeps one height (the rail does not jump) */
+  .ctl { display: flex; align-items: center; gap: 6px 14px; }
+  .ctl-act { flex-wrap: wrap; }
+  .ctl-act .btns { flex: none; }
+  .ctl-act .why { flex: 1 1 16em; }
+  .ctl-plug { flex-direction: row-reverse; }
+  .ctl-plug .btns { flex: none; }
+  #why-action:empty { margin-top: 0; }
+  .ctl-if { display: none; }                                            /* the panel is beside the canvas */
+  .head { display: flex; align-items: flex-end; gap: 12px 40px; margin-bottom: 10px; }
+  .title { flex: none; font-size: 2.4rem; }
+  /* the lede takes the width beside the title: two lines, not three, so the settings row (#toggles) fits
+     above the fold at 1440x900 in play */
+  .lede { flex: 1 1 auto; margin: 0 0 10px; max-width: 80ch; font-size: 1rem; }
+  .game { grid-template-columns: minmax(0, 1fr) minmax(300px, 352px); gap: 28px; }
+  .play { margin: 0; }
+  .toggles { margin-top: 4px; padding-top: 6px; }
+  /* the start card as a two-column form (the label and "Remember" on the left, the field, the reason and the
+     privacy note on the right), so the settings row is also in view at 1440x900 */
+  .nameform { margin-top: 14px; gap: 6px 24px; max-width: 900px; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+  .nameform > .name-label { grid-column: 1; grid-row: 1; }
+  .nameform > .name-row { grid-column: 2; grid-row: 1; max-width: 600px; }
+  .nameform > #name-why { grid-column: 2; grid-row: 2; }
+  .nameform > .check { grid-column: 1; grid-row: 3; }
+  .nameform > #name-privacy { grid-column: 2; grid-row: 3; }
+  #name-why:empty { margin-top: -6px; }
+}
+@media (max-width: 767px) {
+  .head { margin-bottom: 16px; }
+  .title { font-size: 1.6rem; padding-bottom: 8px; }
+  .lede { font-size: .95rem; margin-top: 8px; }
+  .controls { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .ctl-plug { justify-items: stretch; text-align: left; }
+  .ctl-plug .why { max-width: none; }
+  /* the note under the action keeps two lines of room in every state (empty in the approval hold, one line while
+     watching, two in the dark), so the plug below it does not move under the player's finger */
+  #why-action, #why-action:empty { display: block; height: auto; min-height: 3.1em; margin-top: 0; }
+  .btns .btn { flex: 1 1 0; min-width: 0; padding-left: 12px; padding-right: 12px; }
+  .toggles { display: grid; grid-template-columns: 1fr 1fr; }
+  .toggles .btn { justify-content: flex-start; text-align: left; }
+  .endbar .btns { display: grid; grid-template-columns: 1fr; }
+  .rail ol { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .rail li:nth-child(6)::before { display: none; }
+  .rail .chip-t { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+  .name-row { flex-wrap: wrap; }
+  .name-row input { flex-basis: 100%; }
+  .name-row .btn { flex: 1 1 100%; }
+  .panel { padding: 18px 16px 20px; }
+}
+
+/* ---------- reduced motion: the media query, or the toggle (ui.js sets html[data-reduced]) ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+html[data-reduced="true"] *, html[data-reduced="true"] *::before, html[data-reduced="true"] *::after { transition: none !important; animation: none !important; }
+html[data-reduced="true"] .btn:hover, html[data-reduced="true"] .btn:active { transform: none !important; }
+
+/* ---------- forced colours (Windows High Contrast): the pencil SVGs keep their own colours there, so the
+   boxes, ticks and sheets are replaced by system-colour borders and fills ---------- */
+@media (forced-colors: active) {
+  .btn, .name-row input, .rail .chip-n, .keys kbd { border: 1px solid ButtonText; }
+  .btn.toggle::before { background-image: none; border: 1px solid ButtonText; }
+  .btn.toggle[aria-pressed="true"]::before { background: Highlight; }
+  .btn[aria-disabled="true"], .btn:disabled { border-style: dashed; color: GrayText; }
+  .rail .chip[aria-current] .chip-n { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+  .panel, .card { background-image: none; border: 1px solid CanvasText; }
+  .stage::after { display: none; }
+}

@@ -113,7 +113,7 @@ flowchart TD
     K --> B["...right after a tool finished"]
     K --> C["...after the money moved,<br/>before the reply"]
     K --> D["...while waiting for approval"]
-    A --> A2["The heartbeat stops. Temporal retries<br/>the step on another worker, which resumes<br/>the conversation from the session store."]
+    A --> A2["The heartbeat stops. Temporal retries<br/>the step on another worker. Step 1 starts<br/>over from the request; later steps resume<br/>the conversation from the session store."]
     B --> B2["The result is already in the<br/>workflow history. It never runs again."]
     C --> C2["Temporal retries the tool. Same receipt<br/>number, so the bank says: already done."]
     D --> D2["Nothing is running.<br/>The wait lives in Temporal."]
@@ -131,12 +131,12 @@ nothing runs while it waits.
 ## See it interactively
 
 <p>
-  <a href="https://osamastro7-droid.github.io/temporal-claude-agent/map/"><img src="docs/images/map-overview.png" alt="The stage-by-stage map: 9 stages of a refund, six lanes, and Temporal's notebook" width="49%"></a>
-  <a href="https://osamastro7-droid.github.io/temporal-claude-agent/map/"><img src="docs/images/map-crash.png" alt="Stage 7 with the plug pulled: the worker is off, the notebook survives, the refund happened once" width="49%"></a>
+  <a href="https://osamastro7-droid.github.io/temporal-claude-agent/map/"><img src="docs/images/game-play.png" alt="The pencil game at stage 6: the robot agent pauses at the issue_refund tool call, a clock ticks, and you decide as the manager with Approve or Reject; Temporal's notebook and the history sit beside it" width="49%"></a>
+  <a href="https://osamastro7-droid.github.io/temporal-claude-agent/map/"><img src="docs/images/game-crash.png" alt="The plug pulled at stage 7: the room is dark and the agent has slumped, while Temporal's notebook and the approved refund glow because they are written down" width="49%"></a>
 </p>
 
-Open the [interactive map](https://osamastro7-droid.github.io/temporal-claude-agent/map/): step through a refund in 9 stages, then pull the plug at any
-of them and see how the agent recovers.
+Open the [interactive map](https://osamastro7-droid.github.io/temporal-claude-agent/map/), a playable pencil film: type your name, buy the
+teapot, ask for a refund, approve it as the manager, and pull the plug at almost any moment to see how the agent recovers.
 
 ## Quick look
 

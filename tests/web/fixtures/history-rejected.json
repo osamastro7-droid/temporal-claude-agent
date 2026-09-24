@@ -1,0 +1,15 @@
+{
+  "about": "The history panel's events when the manager rejects (GAME_SPEC §10 test 3). From facts.md §3 'Rejected: after the Update (false, result \"rejected\"), issue_refund is never scheduled. Claude segment 3 gives the final answer.' in the wording of GAME_SPEC §3 'Reject path'. Independent of docs/map/content.js. stage null = the spec does not say which stage chip the reject branch plays under; only the text is checked there.",
+  "slugPlaceholder": "<slug>",
+  "events": [
+    { "text": "Workflow started: \"Order A-1001 arrived broken, I want my money back.\"", "stage": 1, "facts": "1 WORKFLOW_EXECUTION_STARTED" },
+    { "text": "Claude step 1 scheduled", "stage": 2, "facts": "5 ACTIVITY_TASK_SCHEDULED run_claude_segment id=1" },
+    { "text": "Claude step 1 done: wants look_up_order (A-1001)", "stage": 3, "facts": "7 ACTIVITY_TASK_COMPLETED deferred look_up_order" },
+    { "text": "look_up_order scheduled, ID tool-toolu_d1afa0cb_01", "stage": 4, "facts": "11 ACTIVITY_TASK_SCHEDULED look_up_order" },
+    { "text": "look_up_order done: Ceramic teapot, 49.99 EUR, <slug>@example.com", "stage": 4, "facts": "13 ACTIVITY_TASK_COMPLETED" },
+    { "text": "Claude step 2 done: wants issue_refund (A-1001, 49.99, \"item arrived broken\")", "stage": 5, "facts": "19 ACTIVITY_TASK_COMPLETED deferred issue_refund" },
+    { "text": "Rejected by manager@shop.example", "stage": 6, "facts": "WORKFLOW_EXECUTION_UPDATE_ACCEPTED/COMPLETED review(toolu_d1afa0cb_02, false, manager@shop.example) -> rejected" },
+    { "text": "Claude step 3 done: \"The refund was not approved, so no money was moved. The case stays open for review.\"", "stage": null, "facts": "ACTIVITY_TASK_COMPLETED run_claude_segment 3: the final answer" },
+    { "text": "Workflow completed", "stage": null, "facts": "WORKFLOW_EXECUTION_COMPLETED" }
+  ]
+}

@@ -1,0 +1,34 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>dev: film act at tau</title>
+<link rel="stylesheet" href="dev.css">
+<!-- Dev harness (tests/web/dev, not published). Draws one act of the film with the docs/map engine.
+  ?act=a3&tau=3.0          act-local time (a1, a2, a3 are in docs/map; others come from the film repo via &more=)
+  ?frame=667               a film2.html frame number instead (a1-a3 only): tau = frame/24 - act start, as the film's locate()
+  &more=a8,a9              also load these acts from /film-src/scenes2/ (read-only film repo), after a3
+  &raster=cpu              software canvas {willReadFrequently:true} for exact pixels (read by tests)
+  &alpha=0                 getContext alpha:false (the game's canvas); default alpha:true (the film's canvas)
+  &via=shop                draw through the game's SHOP.film (captions blanked, one routed back through the hook)
+  &w=960                   backing width (setFormat only changes S)
+  &loop=a3:4.72:13.887     play that window in a rAF loop at 24 drawings/s and record draw times (window.__dev.perf())
+  window.__dev = { ready, draw(act, tau), tauOf(frame), perf(), canvas } -->
+<canvas id="cv"></canvas>
+<pre id="info"></pre>
+<script src="/temporal-claude-agent/map/content.js"></script>
+<script src="/temporal-claude-agent/map/engine/core.js"></script>
+<script src="/temporal-claude-agent/map/engine/studio.js"></script>
+<script src="/temporal-claude-agent/map/engine/cels.js"></script>
+<script src="/temporal-claude-agent/map/engine/font-emstech.js"></script>
+<script src="/temporal-claude-agent/map/engine/logos.js"></script>
+<script src="/temporal-claude-agent/map/engine/kit.js"></script>
+<script src="/temporal-claude-agent/map/engine/cast.js"></script>
+<script src="/temporal-claude-agent/map/engine/stageB.js"></script>
+<script src="/temporal-claude-agent/map/engine/agent.js"></script>
+<script src="/temporal-claude-agent/map/engine/stageC.js"></script>
+<script src="/temporal-claude-agent/map/engine/stageD.js"></script>
+<script src="/temporal-claude-agent/map/game/boot.js"></script>
+<script src="/temporal-claude-agent/map/film/a1.js"></script>
+<script src="/temporal-claude-agent/map/film/a2.js"></script>
+<script src="/temporal-claude-agent/map/film/a3.js"></script>
+<script src="/temporal-claude-agent/map/game/shop.js"></script>
+<script src="film.js"></script>
