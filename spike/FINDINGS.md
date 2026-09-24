@@ -58,6 +58,17 @@ I. Engine version matters. The first real run (Max subscription) passed on Haiku
    package now accepts a newer engine through CLAUDE_CLI_PATH. On engine 2.1.280 all 8 fake scenarios
    pass in both Anthropic API mode and Bedrock mode, so the workarounds above still hold.
 
+J. What the docs say (code.claude.com/docs/en/hooks, checked 2026-09-24). "defer" is documented:
+   the tool does not execute, the run ends with stop_reason "tool_deferred", and the SDK result
+   carries deferred_tool_use. The documented resume path is: resume, the same call fires PreToolUse
+   again, the hook returns "allow". Chaining a later "defer" after that is not documented, and it is
+   what broke in finding A. The docs also say "defer" is ignored when Claude makes several tool calls
+   in one turn. On engines 2.1.277 to 2.1.281, deferring one call and denying the others works (test
+   matrix, parallel_lookups). If an engine ever ignores "defer", the runner now fails closed: it
+   detects that the engine ran a durable tool itself, did not pause at the call the hook deferred,
+   or paused again at an answered call, and stops the step with an error naming the engine version.
+   The workflow also refuses to run the same tool call twice (tests/test_fail_closed.py).
+
 ## Draft upstream issue (github.com/anthropics/claude-code)
 Title: Headless defer: after auto-resuming a deferred tool, a second PreToolUse "defer"
 is ignored ("[Tool result missing due to internal error]")

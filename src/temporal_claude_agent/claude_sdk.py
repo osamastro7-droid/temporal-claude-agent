@@ -36,6 +36,15 @@ from ._models import DeferredCall, SegmentInput, SegmentOutput, ToolOutcome
 ENV_AUTH = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
             "CLAUDE_CODE_USE_FOUNDRY")
 
+def _hook_command() -> str:
+    """The PreToolUse command hook (a function so tests can simulate other engine behavior)."""
+    return f"{shlex.quote(sys.executable)} -m temporal_claude_agent._defer_hook"
+
+
+PAUSE_CONTRACT = ("Durable tools never run inside the engine (the in-engine tool only returns an error), so nothing "
+                  "ran outside Temporal. This step stops instead of continuing. Use a Claude Code version that "
+                  "passes the test matrix (python -m spike.real_matrix --mock).")
+
 SERVER = "durable"
 PREFIX = f"mcp__{SERVER}__"
 # Tested: with parallel tool calls the engine keeps only the last paused call and drops
@@ -97,23 +106,26 @@ class ClaudeAgentSdkRunner:
         return all(any('"tool_result"' in d and tid in d for d in dumped) for tid in tool_use_ids)
 
     async def run(self, inp: SegmentInput, attempt: int) -> SegmentOutput:
-        from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, create_sdk_mcp_server, query, tool
+        from claude_agent_sdk import (ClaudeAgentOptions, ResultMessage, SystemMessage, create_sdk_mcp_server,
+                                      query, tool)
         from claude_agent_sdk._errors import ResultError
 
         injected = {k: _as_outcome(v) for k, v in inp.injected.items()}
         runner = self
+        ran_inside: list[str] = []  # durable tools the engine ran itself in this step (must stay empty)
 
         def make_stub(spec: Any) -> Any:
             @tool(spec.name, spec.description, spec.input_schema)
             async def stub(args: dict[str, Any]) -> dict[str, Any]:
                 runner.stub_calls += 1  # should never happen: the hook always defers
+                ran_inside.append(spec.name)
                 return {"content": [{"type": "text", "text": "This tool must run through Temporal."}], "is_error": True}
 
             return stub
 
         hook_dir = tempfile.mkdtemp(prefix="tca-hook-")
         settings_file = Path(hook_dir) / "settings.json"
-        command = f"{shlex.quote(sys.executable)} -m temporal_claude_agent._defer_hook"
+        command = _hook_command()
         settings_file.write_text(json.dumps({"hooks": {"PreToolUse": [
             {"matcher": f"{PREFIX}.*", "hooks": [{"type": "command", "command": command}]}]}}))
 
@@ -151,10 +163,17 @@ class ClaudeAgentSdkRunner:
         options.update(self._extra)
 
         result: Any = None
+        engine_version = "(unknown version)"
+        paused_by_hook: Optional[str] = None
         try:
             async for message in query(prompt=prompt, options=ClaudeAgentOptions(**options)):
+                if isinstance(message, SystemMessage) and message.subtype == "init":
+                    engine_version = str(message.data.get("claude_code_version") or engine_version)
                 if isinstance(message, ResultMessage):
                     result = message
+            marker = Path(hook_dir) / "paused_call"  # written by the hook when it defers a new call
+            if marker.exists():
+                paused_by_hook = marker.read_text().strip() or None
         except ResultError as err:
             if not any(word in str(err) for word in ("maximum number of turns", "budget")):
                 raise  # other engine errors: let Temporal retry the segment
@@ -167,6 +186,10 @@ class ClaudeAgentSdkRunner:
         sid = result.session_id or session_id
         cost = float(result.total_cost_usd or 0.0)
         deferred = result.deferred_tool_use
+        broken = self._pause_contract_problem(ran_inside, paused_by_hook, deferred, set(injected), engine_version,
+                                              getattr(result, "stop_reason", None))
+        if broken:
+            return SegmentOutput(session_id=sid, is_error=True, error=broken, cost_usd=cost)
         if deferred is not None:
             name = deferred.name[len(PREFIX):] if deferred.name.startswith(PREFIX) else deferred.name
             return SegmentOutput(session_id=sid, deferred=DeferredCall(id=deferred.id, name=name,
@@ -174,6 +197,22 @@ class ClaudeAgentSdkRunner:
         if result.is_error:
             return SegmentOutput(session_id=sid, is_error=True, error=str(result.errors or result.subtype), cost_usd=cost)
         return SegmentOutput(session_id=sid, result=result.result, cost_usd=cost)
+
+    @staticmethod
+    def _pause_contract_problem(ran_inside: list[str], paused_by_hook: Optional[str], deferred: Any,
+                                answered: set[str], version: str, stop_reason: Any) -> Optional[str]:
+        """Fail closed if the engine did not honor the pause. Returns an error message, or None if all is well."""
+        if ran_inside:
+            return (f"Claude Code {version} ran durable tool(s) {', '.join(sorted(set(ran_inside)))} inside the "
+                    f"engine instead of pausing. {PAUSE_CONTRACT}")
+        if deferred is not None and deferred.id in answered:
+            return (f"Claude Code {version} paused again at tool call {deferred.id}, whose result was just "
+                    f"delivered. {PAUSE_CONTRACT}")
+        if paused_by_hook and (deferred is None or deferred.id != paused_by_hook):
+            got = f"paused at {deferred.id}" if deferred is not None else "did not pause"
+            return (f"The pause hook deferred tool call {paused_by_hook}, but Claude Code {version} {got} "
+                    f"(stop_reason={stop_reason}). {PAUSE_CONTRACT}")
+        return None
 
     @staticmethod
     async def _tool_results(session_id: str, injected: dict[str, ToolOutcome]) -> AsyncIterator[dict[str, Any]]:

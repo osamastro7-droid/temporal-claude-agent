@@ -150,6 +150,10 @@ class DurableClaudeAgent:
                 raise ApplicationError(f"Claude run failed: {seg.error}", non_retryable=True)
             if seg.deferred is None:
                 return seg.result or ""
+            if seg.deferred.id in self._calls:  # a tool call runs at most once per workflow, whatever Claude asks
+                raise ApplicationError(f"Claude asked again for tool call {seg.deferred.id} "
+                                       f"({seg.deferred.name}), which already ran. Stopping so it cannot run twice.",
+                                       non_retryable=True)
             injected = {seg.deferred.id: await self._run_tool(seg.deferred)}
         raise ApplicationError(f"Stopped after {self._max_segments} segments", non_retryable=True)
 
