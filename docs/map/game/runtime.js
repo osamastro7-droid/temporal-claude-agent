@@ -39,7 +39,9 @@
 //   entry, so a quick re-crash never shows the previous crash's notes or outcome. Every other queued
 //   caption is held back at the plug (G.worker.caps), with the frozen beat's own caption if the plug cut
 //   it before it was fully written; they come back after the outcome if the frozen beat resumes, or if the
-//   recovery moves on to a later stage (s1b after a stage 1 crash), and stay dropped for a same-stage rerun.
+//   recovery moves on to a later stage (except a caption of a beat whose commits are all in G.book already,
+//   which the outcome restates: s1b after a stage 1 crash), and stay dropped for a same-stage rerun.
+//   A recovery beat's wait (stepWait) does not end in the middle of an idle blink.
 //   "The outcome caption, then the recovery beat" (GAME_SPEC §4 step 8): a recovery into a new stage (or a
 //   beat with captions of its own, or a resumed beat whose caption came back) waits, idling, until the
 //   captions before its own have been shown (G.beat.wait, stepWait), so a stage's caption goes with its
@@ -144,7 +146,10 @@
    */
   function stepWait() {
     const W = G.beat.wait; if (!W || G.frozenQ !== null || G.worker.phase !== 'on') return;
-    const busy = W.until === 'started' ? G.cap.queue.some(x => x.tag === CRASH_TAG) : foreignCapPending();
+    let busy = W.until === 'started' ? G.cap.queue.some(x => x.tag === CRASH_TAG) : foreignCapPending();
+    // not in the middle of an idle blink (view(): ROOM.idle at G.clock - W.since): the eyes would snap open
+    // with the beat's first drawing; the wait ends with the blink (at most 2/24 s later)
+    if (!busy && ROOM.blinkAt(G.clock - W.since)) busy = true;
     if (busy) G.beat.t0 = G.clock - W.q; else { delete G.beat.wait; G.dirty = true; }
   }
   /**
@@ -354,12 +359,17 @@
       return;
     }
     // another beat (or the frozen one started over). Moving to a LATER stage, the frozen stage's held captions
-    // that were not shown yet (s1b "Temporal writes down every finished step.") come back after the outcome;
-    // in the same stage the outcome speaks for the rerun and they stay dropped (GAME_SPEC §4 step 8)
+    // that were not shown yet come back after the outcome, except those of a beat whose commits are all already
+    // in G.book: the outcome says the same (s1b "Temporal writes down every finished step." after a stage 1
+    // crash: row 0 is written at the click, and out1 "Your request was already written down." follows), and
+    // re-queued it would keep the next stage idling under it. In the same stage the outcome speaks for the
+    // rerun and they all stay dropped (GAME_SPEC §4 step 8).
     const later = !!(fb && rb && rb.stage > fb.stage), before = G.cap.queue;
+    const written = id => { const cm = commits(STORY.beat(id) ?? {}); return cm.length > 0 && cm.every(c => G.book[c.row][c.part]); };
+    const back = later ? (w.caps ?? []).filter(x => !(x.beat && stageOfBeat(x.beat) === fb.stage && written(x.beat))) : [];
     G.cap.queue = [];
     if (!enter(rec.id)) { G.cap.queue = before; G.scene = fb?.scene ?? 'room'; return; }
-    G.cap.queue = [...before, ...(later ? w.caps ?? [] : []), ...G.cap.queue];
+    G.cap.queue = [...before, ...back, ...G.cap.queue];
     // "The outcome caption, then the recovery beat": a beat of a new stage, or one with captions of its own,
     // waits at q 0 (idling) until the captions queued before its own have been shown, so its caption starts
     // with its action (not after it, nor dropped when the next stage begins). A same-stage rerun (r2.reread,

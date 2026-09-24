@@ -297,4 +297,122 @@ test.describe('2 crash matrix', () => {
     expect(r.state.world).toMatchObject(W1);
     expect(await problems(w)).toEqual([]);
   });
+
+  // ---- stage 1: the request is Temporal's from the moment it arrives (GAME_SPEC §4 st. 1 "Crash, any time";
+  // story.js requestDurable / world.slipAt). A pull anywhere in the room's build, before row 0 is written: the
+  // request slip goes on falling on the game clock and lands ONCE (never a second slip over it), row 0 and
+  // "Workflow started" are written once, and the recovery (the first beat of stage 2) runs. The build beat is
+  // the stage-1 beat that commits row 0; q is its beat-local time (before the drop, mid-air, landed).
+  const S1_Q = [4.5, 5.25, 5.75, 6.6];
+  const REPLUG = { quick: {}, slow: { darkSec: 4 } };
+  const STARTED = HISTORY_APPROVED.events.find(e => e.stage === 1).text;
+
+  /** Spy on ROOM.frame: every drawn room frame's request slip, as the room draws it (room.js frame: the tray
+   *  holds R.slip when it has tray: true, else the resting slip when R.traySlip; a slip without tray: true is
+   *  in the air, in front). Records {clock, beat, q, phase, tray, air}. */
+  const spySlips = page => page.evaluate(() => {
+    window.__slips = [];
+    const f = ROOM.frame;
+    ROOM.frame = (c, R) => {
+      const g = window.__game.state(), r = R ?? {}, parts = { ...ROOM.BASE_R.parts, ...(r.parts ?? {}) }, sl = r.slip ?? null;
+      const traySlip = 'traySlip' in r ? r.traySlip : ROOM.BASE_R.traySlip, drawn = (parts.tray ?? 1) >= 1;
+      window.__slips.push({ clock: g.clock, beat: g.beat.id, q: g.q, phase: g.worker.phase,
+        tray: drawn && !!((sl && sl.tray) || traySlip), air: !!(sl && !sl.tray), landed: drawn && !sl && !!traySlip });
+      return f(c, R);
+    };
+  });
+  /** Step (1/24 s, each drawn) until beat `id` has started moving (q > 0). Records the first time the outcome
+   *  caption `oc` is on screen (its t0). @returns {{s, tOut, tMove}} tMove = G.clock at the first q > 0 */
+  const toMoving = (page, id, oc, maxSec = 40) => page.evaluate(([id, oc, max]) => {
+    const g = window.__game; let tOut = null;
+    for (let i = 0; i <= max * 24; i++) {
+      const s = g.state();
+      if (tOut === null && s.cap.now && s.cap.now.id === oc) tOut = s.cap.now.t0;
+      if (s.beat.id === id && s.q > 0 && s.worker.phase === 'on') return { s, tOut, tMove: s.clock };
+      g.advance(1 / 24);
+    }
+    return { s: g.state(), tOut, tMove: null };
+  }, [id, oc, maxSec]);
+
+  /** Rail to stage 1, find the build beat (the one that commits row 0), the time the slip lands and stage 2's first beat. */
+  async function stage1(page) {
+    await startWith(page, 'Zoë');
+    await railTo(page, 1);
+    const chain = await stageChain(page, 1), build = chain.find(b => b.commits.some(c => c.row === 0 && c.part === 't'));
+    expect(build, 'the stage-1 beat that writes row 0').toBeTruthy();
+    const land = build.events.find(e => e.world && e.world.traySlip === 1);
+    expect(land, 'the event that lands the request in the tray').toBeTruthy();
+    const s2 = (await stageChain(page, 2))[0].id;
+    return { build, land: land.t, commit: build.commits[0].t, s2 };
+  }
+
+  for (const q of S1_Q) {
+    for (const [how, opts] of Object.entries(REPLUG)) {
+      test(`stage 1 build q ${q}, ${how} re-plug: one request slip, row 0 and "Workflow started" once, then stage 2`, async ({ page }) => {
+        test.setTimeout(120000);
+        const w = await open(page);
+        const S = await stage1(page);
+        expect(q, 'aimed before row 0 is written').toBeLessThan(S.commit);
+        await spySlips(page);
+        await playTo(page, S.build.id, q);
+        const before = await state(page);
+        expect(before.book[0], 'row 0 not written yet').toEqual({ t: 0, c: 0, strike: 0 });
+        expect(before.world.traySlip, before.q >= S.land ? 'the slip has landed' : 'the slip has not landed yet').toBe(before.q >= S.land ? 1 : 0);
+
+        const K = await crash(page, opts);
+        expect(K.atClick.crashes.length).toBe(1);
+        expect(K.atClick.crashes[0]).toMatchObject({ stage: 1, when: 'any' });
+        expect(K.atClick.frozenQ).toBe(before.q);
+        // the request is written at the click (requestDurable), once
+        expect(K.atClick.book[0], 'row 0 written at the click').toEqual({ t: 1, c: 1, strike: 0 });
+        expect(K.pushing.worker.rec.id, 'the recovery beat is stage 2\'s first').toBe(S.s2);
+        expect(K.on.crashes[0].outcome).toBe('out1');
+
+        const M = await toMoving(page, S.s2, 'out1');
+        expect(M.tMove, `stage 2 (${S.s2}) runs after the recovery (stuck at ${M.s.beat.id} q ${M.s.q})`).not.toBeNull();
+        const s = M.s;
+        expect(s.ink.filter(i => i.row === 0).map(i => i.part).sort(), 'row 0: text and check, each written once').toEqual(['c', 't']);
+        expect(s.events.filter(e => e.text === STARTED).length, '"Workflow started" once').toBe(1);
+        const onTray = s.world.traySlip === 1 || (s.world.slipAt !== undefined && s.clock >= s.world.slipAt - 1e-9);
+        expect(onTray, 'the request is in the tray').toBe(true);
+
+        // what the room drew, frame by frame, from the build to stage 2 moving
+        const F = await page.evaluate(() => window.__slips);
+        expect(F.length, 'room frames recorded').toBeGreaterThan(30);
+        const both = F.filter(x => x.tray && x.air);
+        expect(both, 'never a slip in the tray and one in the air at once').toEqual([]);
+        const first = F.findIndex(x => x.landed);
+        expect(first, 'the slip lands').toBeGreaterThanOrEqual(0);
+        const again = F.slice(first).filter(x => x.air || !x.tray);
+        expect(again.slice(0, 3), 'once landed, the slip stays in the tray: no second slip falls, it does not vanish').toEqual([]);
+        let landings = 0; for (let i = 1; i < F.length; i++) if (F[i].landed && !F[i - 1].landed) landings++;
+        expect(landings, 'the slip lands once').toBeLessThanOrEqual(1);
+        expect(F.at(-1), 'the last frame: one slip, in the tray').toMatchObject({ tray: true, air: false });
+        test.info().annotations.push({ type: 'slips', description: `frames ${F.length}, air ${F.filter(x => x.air).length}, landings ${landings}, first landed at clock ${F[first].clock.toFixed(3)} (${F[first].beat} ${F[first].phase}), slipAt ${s.world.slipAt ?? '-'}, click ${K.atClick.clock.toFixed(3)}, s2 moves ${(M.tMove - M.tOut).toFixed(3)} s after out1` });
+
+        const r = await playToEnd(page);
+        expect(r.ok, `reached the end card (stuck at ${r.state.beat.id})`).toBe(true);
+        expect(r.state.events.map(e => e.text), 'the history equals the fixture (nothing reruns)').toEqual(expectedEvents(HISTORY_APPROVED, r.state.slug).map(e => e.text));
+        expect(r.state.ink.filter(i => i.row === 0).length, 'row 0 never written again').toBe(2);
+        expect(r.state.crashes.length).toBe(1);
+        expect(await problems(w)).toEqual([]);
+      });
+    }
+  }
+
+  test('stage 1 build q 5.75, plugged back in: stage 2 starts moving within 6 s of the outcome caption (no idle room)', async ({ page }) => {
+    test.setTimeout(120000);
+    const w = await open(page);
+    const S = await stage1(page);
+    await playTo(page, S.build.id, 5.75);
+    const K = await crash(page);
+    expect(K.on.crashes[0].outcome).toBe('out1');
+    const M = await toMoving(page, S.s2, 'out1', 30);
+    expect(M.tOut, 'the outcome caption is shown').not.toBeNull();
+    expect(M.tMove, `stage 2 (${S.s2}) starts moving (stuck at ${M.s.beat.id} q ${M.s.q}, caption ${M.s.cap.now?.id ?? '-'})`).not.toBeNull();
+    const gap = M.tMove - M.tOut;
+    test.info().annotations.push({ type: 'gap', description: `${S.s2} moves ${gap.toFixed(3)} s after the out1 caption starts` });
+    expect(gap, `${S.s2} moves ${gap.toFixed(2)} s after the outcome caption`).toBeLessThanOrEqual(6);
+    expect(await problems(w)).toEqual([]);
+  });
 });

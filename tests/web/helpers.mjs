@@ -193,7 +193,8 @@ export const playToEnd = (page, decide = 'approve', maxSec = 400) => page.evalua
 /**
  * One crash through the real plug button: click #btn-plug, wait for the dark, click it again (Plug it
  * back in), follow the recovery through the notes close-up until the worker is on again.
- * opts.unplug: 'click' (default) | 'key' (press P while dark); opts.replugWhileWaking: a second crash while he wakes.
+ * opts.unplug: 'click' (default) | 'key' (press P while dark); opts.replugWhileWaking: a second crash while he wakes;
+ * opts.darkSec: a slow re-plug, the room stays dark this many seconds (1/24 s steps, each one drawn) first.
  * @returns {{atClick, dark, pushing, notes, N, on, T}}  G copies at each point; N = STORY.notes near the
  *   end of the close-up (rows, under, ring, arrow); T = ROOM.CRASH_T
  */
@@ -206,6 +207,11 @@ export async function crash(page, opts = {}) {
   const dark = await until(page, { phase: 'dark' }, 3);
   await expect(plug).toHaveText(await page.evaluate(() => CONTENT.html.buttons.unplug));
   await expect(plug).toHaveAttribute('aria-disabled', 'false');
+  if (opts.darkSec) {
+    await page.evaluate(sec => { for (let i = 0; i < Math.round(sec * 24); i++) window.__game.advance(1 / 24); }, opts.darkSec);
+    expect((await state(page)).worker.phase, 'the room stays dark until it is plugged back in').toBe('dark');
+    await expect(plug).toHaveAttribute('aria-disabled', 'false');
+  }
   if (opts.unplug === 'key') await page.keyboard.press('p'); else await plug.click();
   await sync(page);
   const pushing = await state(page);

@@ -36,6 +36,10 @@
 //     stage:     0..9     0 = shop (and the start card), 1..9 the stages of GAME_SPEC §4
 //     beat:      { id, t0 }   the current beat id (STORY.beats key) and the G.clock at which it began
 //              + fired, committed, cued: how many of the beat's events / commits / sfx cues have run (runtime.js)
+//              + plug: undefined | {c, q, rq} set by STORY.onPlug at a crash's first click in this beat (a re-crash
+//                while he wakes keeps it): c = G.clock of the click, q = G.frozenQ (where the beat resumes, if it
+//                does), rq = the previous plug's q in this beat or null. Temporal's pencil is timed from it
+//                (inkPencil: back HOME in the dark, in again from the resume q). A new beat (runtime enter) has none.
 //     q:         number   beat-local time, floor((clock - beat.t0) * 24) / 24, frozen while frozenQ != null
 //     frozenQ:   null|number   set by the crash controller at the plug click: the story stops at this q
 //     book:      [ {t:0|1, c:0|1, strike:0|1} x 6 ]   what Temporal has DURABLY written, per row
@@ -152,7 +156,8 @@
 //              absent (the default) = ROOM places them itself at the tip of whatever is being drawn (see
 //              room.js PENCILS); an array = exactly those pencil tools (drawPencilTool), room world tips.
 //              story.js sets an array only while a pencil glides in or away lifted (nothing to place it
-//              at) and never while the story is frozen (a crash: only the room decides what shows)
+//              at); while the story is frozen (a crash) the room decides, except Temporal's indigo pencil
+//              gliding lifted (away from a mark it finished, or back HOME from an approach the pull cut)
 //     q, q2:   0..1 the red "?" (film prop; the game keeps it 0)
 //     led:     0|1 printer LED on
 //   + notes:   null | N   set only in scene 'notes': the close-up (ROOM.notes) instead of the room
@@ -403,8 +408,9 @@ window.STORY = (() => {
   function settlePencils(G, R) {
     if (!R || !('pencils' in R)) return R;
     if (G.frozenQ !== null) {
-      // frozen: the room decides, except Temporal's pencil gliding away from a mark it finished (lift > 0):
-      // ROOM draws the indigo tip only at a mark (0 < u < 1), so without it the pencil would vanish on the page
+      // frozen: the room decides, except Temporal's pencil gliding away from a mark it finished, or back HOME
+      // from an approach the pull cut (lift > 0): ROOM draws the indigo tip only at a mark (0 < u < 1), so
+      // without it the pencil would vanish on the page or in the air
       const k = Array.isArray(R.pencils) ? R.pencils.filter(p => p.color === 'indigo' && p.lift > 0) : [];
       if (k.length) R.pencils = k; else delete R.pencils;
       return R;
@@ -414,6 +420,7 @@ window.STORY = (() => {
   }
   /** Temporal's indigo pencil: it writes each committed mark (inkPlan, on the game clock, so it keeps
    *  writing in the dark), glides in just before a commit the beat is about to make, and leaves after. */
+  const APPROACH = .42;   // s the indigo pencil takes to glide in from HOME before a commit
   function inkPencil(G, b, q) {
     const plan = inkPlan(G), now = G.clock;
     let cur = null; for (const i of plan) if (i.s0 <= now) cur = i;
@@ -425,12 +432,29 @@ window.STORY = (() => {
       if (now < e) return u <= 0 ? glide(rowTip(cur.row, cur.part, 0), 'indigo', .01) : pencil(rowTip(cur.row, cur.part, u), 'indigo', 0);
       if (now < e + .5) { const u = (now - e) / .5, a = rowTip(cur.row, cur.part, 1); return glide([lerp(a[0], HOME.indigo[0], easeIn(u)), lerp(a[1], HOME.indigo[1], easeIn(u))], 'indigo', u * 3); }
     }
-    // coming in for the beat's next commit (only while the story runs: in the dark it has nothing to write)
-    if (b && G.frozenQ === null && b.commit) {
-      const cm = (Array.isArray(b.commit) ? b.commit : [b.commit]).find(c => c.t > q - 1e-9 && c.t - q <= .42);
-      if (cm) { const a0 = Math.max(0, cm.t - .42), u = clamp((q - a0) / Math.max(1e-6, cm.t - a0), 0, 1), a = rowTip(cm.row, cm.part === 'c' && !G.book[cm.row].t ? 't' : cm.part, 0); return glide([lerp(HOME.indigo[0], a[0], easeOut(u)), lerp(HOME.indigo[1], a[1], easeOut(u))], 'indigo', 1 - u * .8); }
+    if (!b || !b.commit) return null;
+    const cms = Array.isArray(b.commit) ? b.commit : [b.commit], P = G.beat && G.beat.id === b.id ? G.beat.plug : null;
+    // where the approach to commit cm is at q; from = the q it starts from (APPROACH s before the commit, or
+    // later: the q this beat resumed at after a crash, so it glides in from HOME from there, never mid-air)
+    const approach = (cm, q, from) => { const a0 = Math.max(0, cm.t - APPROACH, from ?? -Infinity), u = clamp((q - a0) / Math.max(1e-6, cm.t - a0), 0, 1), a = rowTip(cm.row, cm.part === 'c' && !G.book[cm.row].t ? 't' : cm.part, 0);
+      return glide([lerp(HOME.indigo[0], a[0], easeOut(u)), lerp(HOME.indigo[1], a[1], easeOut(u))], 'indigo', 1 - u * .8); };
+    const next = (q, from) => cms.find(c => c.t > q - 1e-9 && c.t - q <= APPROACH && q > Math.max(c.t - APPROACH, from ?? -Infinity) - 1e-9);
+    if (G.frozenQ !== null) {
+      // a pull during the approach (the story stops, it has nothing to write in the dark): it glides back HOME
+      // from where it was at the click, over .5 s from that click (the first one: a re-crash never restarts it);
+      // settlePencils keeps it (an indigo glide, lift > 0). Only in the frozen beat's own drawing.
+      if (!P || !G.beat || G.beat.id !== b.id) return null;
+      const cm = next(G.frozenQ, P.rq); if (!cm || cm.t - G.frozenQ <= 1e-9) return null;
+      const v = (now - P.c) / .5; if (v >= 1) return null;
+      const A = approach(cm, G.frozenQ, P.rq), e = easeIn(clamp(v, 0, 1));
+      return glide([lerp(A.x, HOME.indigo[0], e), lerp(A.y, HOME.indigo[1], e)], 'indigo', lerp(A.lift, 1, e));
     }
-    return null;
+    // coming in for the beat's next commit (only while the story runs). A beat resumed by a recovery waits
+    // (G.beat.wait) at the q it froze at: no pencil hangs in the air meanwhile, and the approach then starts
+    // from HOME at that q (the wait's release), timed over what is left before the commit.
+    if (G.beat && G.beat.wait && G.beat.id === b.id) return null;
+    const from = P ? P.q : null, cm = next(q, from);
+    return cm ? approach(cm, q, from) : null;
   }
 
   // ---- the agent's acting: named poses on twos (a3 track, a3.js:116-126), looks with blinks (a3 lookAt) ----
@@ -698,7 +722,11 @@ window.STORY = (() => {
    *  (after the notebook is drawn), with "Workflow started" (GAME_SPEC §4 st. 1 "Crash, any time"). */
   function requestDurable(G) {
     if (G.beat.id !== 's1.build' || G.book[0].t) return;
-    const t0 = Math.max(G.clock, G.beat.t0 + T1.book[1] + .1);
+    // durable now (the book, the panel, "Workflow started"), but DRAWN as in the uncrashed play and the film (a3):
+    // the slip lands first (T1.drop[1], on the game clock), then Temporal's pencil writes row 0 ~1 s later, at the
+    // beat's own commit time (T1.commit); a pull after that moment writes it at once. The notes close-up (>= 3.8 s
+    // after the click, CRASH_T) comes after it is written: the earliest pull, q 4.02, starts it 2.9 s later.
+    const t0 = Math.max(G.clock, G.beat.t0 + T1.commit);
     for (const part of ['t', 'c']) { G.book[0][part] = 1; G.ink.push({ row: 0, part, t0 }); }
     // the slip itself is not the worker's either: if it is still falling (or not yet in view) it goes on
     // falling on the game clock (the s1.build R, t1) and lands at t0 + T1.drop[1]; later beats show it in
@@ -752,13 +780,18 @@ window.STORY = (() => {
       commit: [{ t: T1.commit, row: 0, part: 't' }, { t: T1.commit, row: 0, part: 'c' }],
       events: [[T1.drop[1], G => { G.world.traySlip = 1; }], [T1.commit, G => log(G, 'started')]],
       cls: () => 'any', recover: () => 's2.read', outcome: () => 'out1',
-      sfx: [[T1.agent[0], 'pencil', { dur: T1.mail[1] - T1.agent[0], gate: 1 }], [T1.book[0], 'pencil', { dur: T1.book[1] - T1.book[0], gate: .6 }], [T1.drop[1] - .05, 'paper', { k: 0 }]],
+      // the slip's 'paper' as it lands: on q, or, while a crash has frozen the story before it landed, on the game
+      // clock (world.slipAt, where t1 draws it landing): runtime cues a list entry once q >= its t, so the entry
+      // moves to q 0 (already reached) once the clock gets there, and to Infinity (never) until then
+      sfx: G => { const P = T1.drop[1] - .05, frozen = G.frozenQ !== null && G.world.slipAt !== undefined && G.frozenQ < P && G.beat.id === 's1.build';
+        return [[T1.agent[0], 'pencil', { dur: T1.mail[1] - T1.agent[0], gate: 1 }], [T1.book[0], 'pencil', { dur: T1.book[1] - T1.book[0], gate: .6 }],
+          [frozen ? (Math.floor((G.clock - G.beat.t0) * 24 + 1e-6) / 24 >= P ? 0 : Infinity) : P, 'paper', { k: 0 }]]; },   // the same q grid as uncrashed
       R: (G, q) => {
         const R = base(G, beats['s1.build'], q), q2 = tw(q), qc = q;
         q = t1(G, q);
         R.parts = { agent: sm(T1.agent[0], T1.agent[1], q, lin), printer: sm(T1.printer[0], T1.printer[1], q, lin), tray: sm(T1.tray[0], T1.tray[1], q, lin), book: sm(T1.book[0], T1.book[1], q, lin), clock: 1 };
         R.envelope = q < T1.mail[0] ? { state: 'none', u: 0, fly: 0 } : { state: 'desk', u: sm(T1.mail[0], T1.mail[1], q, lin), fly: 0 };
-        R.face = look(q2, [[0, 'open'], [g12(T1.drop[0] + f(1)), 'sideR'], [g12(T1.commit - f(3)), 'side']], [g12(T1.agent[1] + .55), g12(T1.drop[1] + .5)]);   // a3.js:420-422; he looks at the notebook as it writes
+        R.face = look(q2, [[0, 'open'], [g12(T1.drop[0] + f(1)), 'sideR'], [g12(T1.commit - f(3)), 'side']], [g12(T1.agent[1] + .55), g12(T1.book[1] + .25), g12(T1.drop[1] + .5)]);   // a3.js:420-422; he looks at the notebook as it writes; a blink every ~2.2 s while he waits (2, 4.25, 6.417)
         R.slip = dropSlip(q); R.traySlip = q >= T1.drop[1] || G.world.traySlip ? 1 : 0;
         // Temporal's pencil: it draws the notebook, waits over the page, then writes the request (inkPencil)
         // (no approach glide from HOME: the build's own pencil already hovers over the page, 27 px from row 0)
@@ -1110,7 +1143,11 @@ window.STORY = (() => {
     const R = base(G, beats['s9.done'], q), q2 = tw(q), gu = sm(T9.green[0], T9.green[1], q, lin);
     R.receipt = { e: 150, check: gu };
     R.pose = track(q2, [[0, 'rest'], [T9.cheer[0], 'cheer', T9.cheer[1] - T9.cheer[0], easeOut], [T9.cheerOut[0], 'rest', T9.cheerOut[1] - T9.cheerOut[0]]]);   // a9.js:169
-    R.face = look(q2, [[0, 'sideR'], [T9.happy, 'happy']], [f(2)]);
+    // its own blink at f(2), unless a recovery brought him here (a crash in s8.step4 after row 5, or in s9.done
+    // itself: runtime's c.rec): he has just blinked in his wake / idle, so a second one 1-2 drawings later
+    // would read as a double blink
+    const recovered = G.crashes.some(c => c.rec === 's9.done');
+    R.face = look(q2, [[0, 'sideR'], [T9.happy, 'happy']], recovered ? [] : [f(2)]);
     const A = greenTip(0), B = greenTip(1);
     if (q >= T9.green[0] - .4 && q < T9.green[0]) { const u = sm(T9.green[0] - .4, T9.green[0], q, easeOut); R.pencils = [...R.pencils, glide([lerp(HOME.green[0], A[0], u), lerp(HOME.green[1], A[1], u)], 'green', 1 - u)]; }
     else if (q >= T9.green[0] && q < T9.green[1]) R.pencils = [...R.pencils, gu <= 0 ? glide(greenTip(0), 'green', .01) : pencil(greenTip(gu), 'green', 0)];   // check 0: ROOM draws no tip, so a glide
@@ -1294,7 +1331,13 @@ window.STORY = (() => {
    * (answerOutAt), which only the recovery's drawing reads.
    * @param {object} G  mutated (book, ink, world.traySlip, events, answerOut) @returns {void}
    */
-  function onPlug(G) { requestDurable(G); answerOutAt(G); }
+  function onPlug(G) {
+    // G.beat.plug (SCHEMAS): the first click of this crash (a re-crash while he wakes keeps it): when, the q the
+    // story froze at (the beat resumes there, if it does) and the previous plug's q in this beat (rq: where a
+    // resumed approach started). inkPencil times Temporal's pencil from it. A new beat (enter) has none.
+    if (G.worker.phase === 'on' && G.frozenQ !== null) { const p = G.beat.plug; G.beat.plug = { c: G.clock, q: G.frozenQ, rq: p ? p.q : null }; }
+    requestDurable(G); answerOutAt(G);
+  }
   /**
    * G.answerOut (story.js SCHEMAS): the saved answer slip of a step beat (b.answer) that was still out of his
    * badge at the click (at WAIT, hopping back, or sinking in), as its R.wait; else null. The recovery beat's
