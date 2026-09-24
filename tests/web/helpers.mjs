@@ -61,7 +61,7 @@ export async function ready(page) {
 // (stageChain below), so the specs follow whatever beats the story builder writes.
 // ================================================================================================
 import fs from 'node:fs';
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
 
 const fixture = f => JSON.parse(fs.readFileSync(new URL(`./fixtures/${f}`, import.meta.url), 'utf8'));
 export const HISTORY_APPROVED = fixture('history-approved.json');
@@ -82,14 +82,6 @@ export async function open(page, query = '?test=1') {
 }
 /** Everything a clean page must not have: errors, CSP violations, requests off /map/. */
 export async function problems(w) { const r = await w.finish(); return [...r.errors, ...r.csp, ...r.external]; }
-
-/** Stages 0..9 that have no beat in STORY.beats yet ([] = the story is there). */
-export const storyGaps = page => page.evaluate(() => { const have = new Set(Object.values(STORY.beats).map(b => b.stage)); return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(k => !have.has(k)); });
-/** Mark the running test fixme while the story builder's beats are missing (it activates by itself once they land). */
-export async function needStory(page) {
-  const miss = await storyGaps(page);
-  test.fixme(miss.length > 0, `needs game/story.js beats for stage(s) ${miss.join(',')} (story builder)`);
-}
 
 export const state = page => page.evaluate(() => window.__game.state());
 export const view = page => page.evaluate(() => window.__game.view());

@@ -2,15 +2,17 @@
 // crash (the dark glow: Safari's blur fallback, kit.js glowBehind) and the notes close-up.
 //   npx playwright test --project=webkit
 import { test, expect } from '@playwright/test';
-import { open, problems, needStory, state, sync, startWith, playToEnd, crash, until, HISTORY_APPROVED, expectedEvents, isRetry } from './helpers.mjs';
+import { open, problems, state, sync, startWith, playToEnd, crash, until, HISTORY_APPROVED, expectedEvents, isRetry } from './helpers.mjs';
 
 test('10 webkit: full play with a crash, no errors', async ({ page, browserName }) => {
   test.skip(browserName !== 'webkit', 'the WebKit project runs this');
   test.setTimeout(240000);
-  const w = await open(page, '?test=1&raster=cpu');
+  // ?test=1 without &raster=cpu: WebKit's software canvas (willReadFrequently) takes ~1 s per room drawing
+  // (measured: 902 ms at stage 5, 1123 ms at stage 7, vs 9 / 8 ms), so a whole play would not finish; 10b reads
+  // the glow's pixels in ?raster=cpu instead
+  const w = await open(page, '?test=1');
   const hasFilter = await page.evaluate(() => 'filter' in CanvasRenderingContext2D.prototype);
   test.info().annotations.push({ type: 'canvas filter', description: hasFilter ? 'present (the fallback path does not run here)' : 'absent: glowBehind uses its layer fallback' });
-  await needStory(page);
   await startWith(page, 'Zoë');
   // the shop and the room through the real buttons, until stage 7's printer
   for (let i = 0; i < 800; i++) {

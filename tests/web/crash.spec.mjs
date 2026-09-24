@@ -6,7 +6,7 @@
 // rows (with the ring and the arrow), the outcome caption, the retry line in the history, and the runs and
 // refunds at the end. Beat ids are never hard-coded.
 import { test, expect } from '@playwright/test';
-import { open, problems, needStory, state, view, advance, sync, startWith, railTo, playTo, playToEnd, crash, until,
+import { open, problems, state, view, advance, sync, startWith, railTo, playTo, playToEnd, crash, until,
   stageChain, locate, commitOf, sampleBeat, HISTORY_APPROVED, expectedEvents, retryLine, isRetry } from './helpers.mjs';
 
 /** book rows from a short form: '11 10' -> [{t:1,c:1,strike:0}, {t:1,c:0,strike:0}, {0,0,0} x 4] */
@@ -84,7 +84,6 @@ test.describe('2 crash matrix', () => {
     test(`${c.id}: stage ${c.stage}${c.outcome && typeof c.outcome === 'string' ? ' -> ' + c.outcome : ''}`, async ({ page }) => {
       test.setTimeout(120000);
       const w = await open(page);
-      await needStory(page);
       await startWith(page, 'Zoë');
       await railTo(page, c.stage);
       const chain = await stageChain(page, c.stage);
@@ -168,7 +167,6 @@ test.describe('2 crash matrix', () => {
   test('a crash while he wakes (stage 4, before the lookup is written): one recovery answers both', async ({ page }) => {
     test.setTimeout(120000);
     const w = await open(page);
-    await needStory(page);
     await startWith(page, 'Zoë');
     await railTo(page, 4);
     const chain = await stageChain(page, 4), cm = commitOf(chain, 1, 'c'), tgt = locate(chain, cm.abs - .3);
@@ -191,7 +189,6 @@ test.describe('2 crash matrix', () => {
   test('a double crash in stage 7 (before t_m, then between t_m and t_c of the rerun): still one refund', async ({ page }) => {
     test.setTimeout(150000);
     const w = await open(page);
-    await needStory(page);
     await startWith(page, 'Zoë');
     await railTo(page, 7);
     const chain = await stageChain(page, 7), tgt = targetOf({ stage: 7, at: { tm: -.3 } }, chain);
@@ -209,15 +206,67 @@ test.describe('2 crash matrix', () => {
     expect(r.ok).toBe(true);
     const texts = r.state.events.map(e => e.text);
     expect(texts.filter(t => !isRetry(t))).toEqual(expectedEvents(HISTORY_APPROVED, 'zoe').map(e => e.text));
-    expect(texts.filter(isRetry)).toEqual([retryLine('issue_refund', 2), retryLine('issue_refund', 3)]);
+    // one ACTIVITY_TASK_STARTED line per Activity, with the last attempt (facts.md §3 "After a retry, only the last attempt shows")
+    expect(K2.atClick.events.map(e => e.text).filter(isRetry), 'after the first recovery: attempt 2').toEqual([retryLine('issue_refund', 2)]);
+    expect(texts.filter(isRetry), 'after the second: the attempt 2 line is replaced by attempt 3').toEqual([retryLine('issue_refund', 3)]);
     expect(r.state.world).toMatchObject({ refunds: 1, refundRuns: 3, emails: 1, emailRuns: 1 });
     expect(await problems(w)).toEqual([]);
   });
 
+  // A crash inside a retry (facts.md §3): the Activity is still the same unfinished one, so the history keeps ONE retry
+  // line for it, with the newest attempt, where the latest crash happened. Both crashes land 0.3 s before the commit;
+  // the second one's commit is found by walking STORY's beats from the recovery beat (no beat ids hard-coded).
+  const DOUBLE = [
+    { name: 'stage 3 (step 1 before its line is written)', stage: 3, row: 1, part: 't', outcome: 'out2', what: 'Claude step 1', key: 'step1', world: {} },
+    { name: 'stage 4 (the lookup before its check), then inside its retry', stage: 4, row: 1, part: 'c', outcome: 'out4', what: 'look_up_order', key: 'lookup', world: { lookups: 3 }, inRetry: true },
+  ];
+  for (const d of DOUBLE) {
+    test(`a double crash in ${d.name}: one retry line, attempt 3`, async ({ page }) => {
+      test.setTimeout(150000);
+      const w = await open(page);
+      await startWith(page, 'Zoë');
+      await railTo(page, d.stage);
+      const chain = await stageChain(page, d.stage), cm = commitOf(chain, d.row, d.part), tgt = locate(chain, cm.abs - .3);
+      await playTo(page, tgt.id, tgt.q);
+      const K1 = await crash(page);
+      expect(K1.atClick.crashes[0].when).toBe('before');
+      expect(K1.on.crashes[0].outcome).toBe(d.outcome);
+      expect(K1.on.beat.id, 'the story runs again from the recovery beat').toBe(K1.pushing.worker.rec.id);
+      // the same commit, reached again along the recovery path
+      const nx = await page.evaluate(([row, part]) => {
+        const g = JSON.parse(JSON.stringify(window.__game.state())); let id = g.beat.id;
+        for (let i = 0; i < 20 && id; i++) { const b = STORY.beat(id); if (!b) return null;
+          const c = [].concat(b.commit ?? []).find(x => x.row === row && x.part === part); if (c) return { id, t: c.t };
+          const n = b.next(g); if (!n || n === id) return null; id = n; }
+        return null;
+      }, [d.row, d.part]);
+      expect(nx, `the commit of row ${d.row} '${d.part}' after ${K1.on.beat.id}`).toBeTruthy();
+      await playTo(page, nx.id, nx.t - .3);
+      const before = await state(page);
+      expect(before.book[d.row][d.part], 'aimed before the commit again').toBe(0);
+      expect(before.events.map(e => e.text).filter(isRetry), 'after the first recovery: attempt 2').toEqual([retryLine(d.what, 2)]);
+      if (d.inRetry) expect(before.beat.id, 'the second crash is inside the retry beat itself').toBe(K1.pushing.worker.rec.id);
+      const K2 = await crash(page);
+      expect(K2.atClick.crashes.map(x => x.when)).toEqual(['before', 'before']);
+      expect(capIds(K2.atClick), '"The server crashes again."').toContain('crashAgain');
+      expect(K2.on.crashes[1].outcome).toBe(d.outcome);
+      const r = await playToEnd(page);
+      expect(r.ok, `reached the end card (stuck at ${r.state.beat.id})`).toBe(true);
+      const texts = r.state.events.map(e => e.text);
+      expect(texts.filter(t => !isRetry(t)), 'the history minus retry lines equals the fixture').toEqual(expectedEvents(HISTORY_APPROVED, 'zoe').map(e => e.text));
+      expect(texts.filter(isRetry), 'one line for the Activity, the last attempt').toEqual([retryLine(d.what, 3)]);
+      // where the latest crash happened: the attempt 2 line is dropped and attempt 3 takes the end of the history
+      expect(texts.indexOf(retryLine(d.what, 3))).toBe(K2.atClick.events.length - 1);
+      expect(r.state.world).toMatchObject({ ...W1, ...d.world });
+      expect(r.state.world.attempts?.[d.key], `${d.key} ran three times`).toBe(3);
+      expect(r.state.crashes.length).toBe(2);
+      expect(await problems(w)).toEqual([]);
+    });
+  }
+
   test('approve while dark: the stamp waits for the power and the notes; the event comes after', async ({ page }) => {
     test.setTimeout(120000);
     const w = await open(page);
-    await needStory(page);
     await startWith(page, 'Zoë');
     await railTo(page, 6);
     for (let i = 0; i < 120; i++) { const v = await view(page); if (v.action.act === 'approve' && v.action.enabled) break; await advance(page, .5); }

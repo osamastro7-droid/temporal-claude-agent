@@ -60,13 +60,13 @@
       </form>
 
       <div id="controls" class="controls" role="group" hidden>
-        <div class="ctl ctl-act"><div class="btns"><button id="btn-action" type="button" class="btn primary" aria-disabled="true" aria-describedby="why-action"></button><button id="btn-alt" type="button" class="btn" aria-disabled="true" aria-describedby="why-action" hidden></button></div><p id="why-action" class="why"></p></div>
+        <div class="ctl ctl-act"><div class="btns"><button id="btn-action" type="button" class="btn primary" aria-disabled="true" aria-describedby="why-action"></button><button id="btn-alt" type="button" class="btn" aria-disabled="true" aria-describedby="why-action" hidden></button></div><p id="why-action" class="why" aria-live="polite"></p></div>
         <div class="ctl ctl-plug"><div class="btns"><button id="btn-plug" type="button" class="btn plug" aria-pressed="false" aria-disabled="true" aria-describedby="why-plug"></button></div><p id="why-plug" class="why"></p></div>
-        <div id="toggles" class="ctl toggles" role="group">
-          <button id="btn-pause" type="button" class="btn toggle" aria-pressed="false"></button>
-          <button id="btn-sound" type="button" class="btn toggle" aria-pressed="false"></button>
-          <button id="btn-step" type="button" class="btn toggle" aria-pressed="false"></button>
-          <button id="btn-reduced" type="button" class="btn toggle" aria-pressed="false"></button>
+        <!-- the panel's "If you pull the plug now" and outcome, repeated under the plug while the panel sits below the
+             canvas (< 1100 px); aria-hidden: screen readers read them once, in the panel -->
+        <div id="ctl-if" class="ctl-if" aria-hidden="true" hidden>
+          <p id="c-if" class="if"><span id="c-if-label" class="label red"></span> <span id="c-if-text"></span></p>
+          <p id="c-note" class="outcome"></p>
         </div>
       </div>
 
@@ -83,10 +83,20 @@
         <ol></ol>
       </nav>
 
+      <div id="toggles" class="toggles" role="group">
+        <button id="btn-pause" type="button" class="btn toggle" aria-pressed="false"></button>
+        <button id="btn-sound" type="button" class="btn toggle" aria-pressed="false"></button>
+        <button id="btn-step" type="button" class="btn toggle" aria-pressed="false"></button>
+        <button id="btn-reduced" type="button" class="btn toggle" aria-pressed="false"></button>
+        <button id="btn-keys" type="button" class="btn toggle" aria-pressed="true"></button>
+      </div>
+
       <p id="status" class="status" role="status"></p>
     </div>
 
-    <aside id="panel" class="panel">
+    <aside id="panel" class="panel" aria-labelledby="p-title">
+      <h2 id="p-title" class="sr"></h2>
+      <p class="who-box"><span id="p-who-label" class="label"></span> <span id="p-who" class="who"></span></p>
       <div class="now-box">
         <p class="label" id="p-now-label"></p>
         <p id="p-now" class="now"></p>
@@ -101,6 +111,7 @@
       <p id="p-proof" class="proof"></p>
       <div class="book-box">
         <h3 id="p-book-label" class="small indigo"></h3>
+        <p id="p-book-note" class="note"></p>
         <ol id="p-book" class="book"></ol>
       </div>
       <div class="history-box">
@@ -120,11 +131,13 @@
     <section id="sec-proven" class="more"></section>
   </div>
 
-  <footer id="footer" class="foot">
-    <p id="footer-text">temporal-claude-agent, built in Python by Osamah Al-Harazi. Temporal and Claude marks belong to Temporal Technologies and Anthropic; this is a community project, not affiliated with or endorsed by either.</p>
-    <p><a id="footer-lic" href="licenses/NOTICE.txt">Licences and credits</a></p>
-  </footer>
   <noscript><p class="note">This page is a game drawn with JavaScript. Please turn JavaScript on to play.</p></noscript>
 </main>
+<footer id="footer" class="foot">
+  <div class="foot-in">
+  <p id="footer-text">temporal-claude-agent, built in Python by Osamah Al-Harazi. Temporal and Claude marks belong to Temporal Technologies and Anthropic; this is a community project, not affiliated with or endorsed by either.</p>
+  <p><a id="footer-lic" href="licenses/NOTICE.txt">Licences and credits</a></p>
+  </div>
+</footer>
 </body>
 </html>

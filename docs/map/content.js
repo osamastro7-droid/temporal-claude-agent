@@ -48,6 +48,10 @@ window.CONTENT = {
       outSkip: { lines: ['It is written down.', 'He skips it.'] },
       out5: { lines: ['Step 2 never finished:', 'it runs again.'] },
       out6: { lines: ['Nothing was running.', 'The approval still waits.'] },
+      // a crash around the stamp, or a decision made in the dark (game/story.js s6.wait / stampBeat outcome)
+      out6approved: { lines: ['The approval is written down.', 'The refund runs next.'] },
+      out6rejected: { lines: ['The rejection is written down.', 'No money moves.'] },
+      out6decided: { lines: ['Your decision was not written yet.', 'Now it is stamped.'] },
       out7before: { lines: ['The refund runs again', 'with the same number.'] },
       out7money: { lines: ['Same receipt number:', 'still one refund.'] },
       out8email: { lines: ['Same receipt number:', 'still one email.'] },
@@ -98,7 +102,7 @@ window.CONTENT = {
       game: 'The game', controls: 'Controls', endbar: 'Play again', panel: 'What is happening',
       cases: 'Special cases', findings: 'What we found inside the engine', proven: 'Proven with real Claude',
     },
-    lede: 'A playable pencil film of a Claude agent running on Temporal. Buy a teapot, ask for a refund, approve it as the manager, and pull the plug whenever you like.',
+    lede: 'A playable pencil film of a Claude agent running on Temporal. Buy a teapot, ask for a refund, approve it as the manager, and pull the plug on the server whenever you like.',
     name: {
       label: 'What\u2019s your name?',
       start: 'Start',
@@ -114,7 +118,7 @@ window.CONTENT = {
     // control bar labels (ui.js). `action` keys are the act names of window.__game.act
     buttons: {
       buy: 'Buy', pay: 'Pay', refund: 'Request refund', submit: 'Submit',
-      approve: 'Approve', reject: 'Reject', next: 'Next',
+      approve: 'Approve', reject: 'Reject', next: 'Next', watch: 'Watching…',
       plug: 'Pull the plug', unplug: 'Plug it back in',
       pause: 'Pause', sound: 'Sound', stepMode: 'Stop after each stage',
       playAgain: 'Play again', changeName: 'Change name', tryBreak: 'Try to break it',
@@ -127,7 +131,12 @@ window.CONTENT = {
       plugNotes: 'Wait: he is reading his notes.',
       plugDone: 'The story is over: everything is written down.',
       action: 'Nothing to do right now: watch.',
+      plugBack: 'The server is off. Plug it back in to go on.',
+      plugBuild: 'Wait: the room is still being drawn.',
       queued: 'Your decision is made. It is stamped once the power is back.',
+      // which decision was queued in the dark (story.js action(): reason by G.approval.queued)
+      queuedApprove: 'You approved. It is stamped once the power is back.',
+      queuedReject: 'You rejected. It is stamped once the power is back.',
       // a NOTE shown under Approve / Reject while the power is off; the buttons stay enabled (the
       // decision is queued, GAME_SPEC §4 st. 6)
       approveOff: 'The power is off. Your decision waits until it is back.',
@@ -137,7 +146,13 @@ window.CONTENT = {
     // facts.md §4.
     panel: {
       nowLabel: 'Now:',
+      // "Now" while the power is off (the plug being pulled, or out)
+      darkNow: 'The worker is gone. Nothing runs, but Temporal keeps everything written down and waits for a worker to come back.',
       ifPlugLabel: 'If you pull the plug now:',
+      // the exact typed name at the top of the panel (GAME_SPEC §0: "The panel shows the exact name"), ui.js
+      playerLabel: 'Playing as',
+      // read by screen readers after a struck (crossed-out) notebook row; the row is shown struck through (ui.js)
+      struck: '(crossed out: rejected, never run)',
       notebookLabel: 'Temporal\u2019s notebook',
       historyLabel: 'History',
       // now[k]: what happens in stage k (0 = the shop). Every sentence is checked against the code; the
@@ -147,11 +162,11 @@ window.CONTENT = {
         'Your request reaches the server. Temporal starts a workflow and writes your request down first.',
         'A worker runs Claude step 1: Claude reads your request. Each Claude step is one Temporal Activity.',
         'Claude wants to look up your order, but he never runs a tool himself. He pauses, and Temporal writes down what he wants.',
-        'Temporal runs look_up_order as its own Activity, with a fixed ID, and writes down the answer.',
+        'Temporal schedules look_up_order as its own Activity with a fixed ID; a worker runs it, and Temporal writes down the answer.',
         'Claude step 2 picks up the same conversation. The saved answer goes back to Claude, and he asks for issue_refund.',
         'issue_refund needs a human. Nothing is written while it waits. Only manager@shop.example may approve: a validated Update. You are the manager: approve or reject.',   // GAME_SPEC §4 st. 6 panel text, then the player's cue
-        'Temporal runs issue_refund. Its fixed ID goes to the shop as the receipt number, so the shop makes the refund only once.',
-        'Claude step 3 asks for email_customer, and Temporal sends the email with its own fixed ID. Then Claude step 4 writes the final answer.',
+        'Temporal schedules issue_refund, and a worker runs it. Its fixed ID goes to the shop as the receipt number, so the shop makes the refund only once.',
+        'Claude step 3 asks for email_customer, which a worker runs as its own Activity with its own fixed ID. Then Claude step 4 writes the final answer.',
         'The workflow is complete: 4 Claude steps, one refund, one email. Everything is written down, so nothing runs again.',   // not "each tool ran once": after a crash a tool can run twice (test_crash.py:109); the money moves once
       ],
       // ifPlug[k] is keyed by the crash class STORY.crashWhen(G) gives at the current moment (GAME_SPEC §4
@@ -159,21 +174,23 @@ window.CONTENT = {
       // Stage 0 is the shop: no plug there (the disabled reason shows instead).
       ifPlug: [
         { any: 'There is no plug in the shop. It is in the server room, behind the scenes.' },
-        { any: 'Nothing is lost. Your request is already written down, so a new worker picks it up.' },
+        { any: 'Nothing is lost. Temporal has kept your request since the workflow started (its line in the notebook may still be on the way), so a new worker picks it up.' },
         { any: 'Step 1 has not finished. It starts over from your request, in a clean new conversation. No tool has run yet.' },
         { before: 'Step 1 is not written down yet. The slip drops, and step 1 starts over from your request.',
-          after: 'Step 1 is written down: look_up_order waits in the notebook. Nothing runs again.' },
-        { before: 'The lookup is not written down yet. Temporal runs it again with the same ID. Looking up an order twice does no harm.',
+          after: 'Step 1 is written down: look_up_order waits in the notebook. Step 1 never runs again.' },
+        { before: 'The lookup is not written down yet. A new worker runs it again with the same ID. Looking up an order twice does no harm.',
           after: 'The lookup’s answer is written down. It never runs again: the new worker reads the saved answer.' },
         { before: 'Step 2 has not finished. It runs again and picks up the same conversation. The saved answer is not lost.',
           after: 'Step 2 is written down: issue_refund waits in the notebook. Step 2 never runs again.' },
-        { wait: 'Nothing is running, so nothing is lost: the approval still waits. A decision made while the power is off is written once a worker is back.' },
-        { before: 'The refund has not finished. Temporal runs it again with the same receipt number, so the shop still makes one refund.',
+        // 'after': s6.stamp once "approved" is written at the impact (story.js stampBeat cls; recover -> s7.refund)
+        { wait: 'Nothing is running, so nothing is lost. The approval keeps waiting, and a decision is written only once a worker is back.',
+          after: 'The approval is written down. It is never asked for again: the refund runs next.' },
+        { before: 'The refund has not finished. A new worker runs it again with the same receipt number, so the shop still makes one refund.',
           money: 'The shop has made the refund, but the answer is not saved yet. The retry uses the same receipt number, so the shop returns the refund it already made: still one refund.',
           after: 'The refund is written down. It never runs again.' },
         // one text for s8.step3, s8.email and s8.step4: true at all three. The email's key is its own Activity
         // ID tool-toolu_d1afa0cb_03 (activities.py:49, _workflow.py:174), not the refund's receipt number.
-        { before: 'This step is not written down yet, so it runs again. A Claude step picks up the same conversation. The email tool keeps its own fixed ID, so the shop still keeps one email.',
+        { before: 'This step is not written down yet, so it runs again. Claude steps 3 and 4 pick up the same conversation. The email keeps its own fixed ID, so the shop still keeps one email.',
           after: 'This step is written down. It never runs again.' },
         { any: 'Everything is written down. Nothing runs again.' },
       ],
@@ -187,14 +204,17 @@ window.CONTENT = {
         'Tested with real Claude: crash_mid_answer stops the engine in the middle of step 2, and the retry finishes the job (also check 4 in spike/m1_checks.py).',
         'Tested: test_approved_refund_runs_each_tool_once, test_rejected_refund_moves_no_money, test_only_an_allowed_approver_can_approve, and with real Claude refund_approved and refund_rejected. A crash while it waits is not covered by a test; it holds by design.',
         'Tested: test_crash_after_money_moved_but_before_the_reply (2 runs, 1 refund), test_crash_right_after_refund_is_recorded, test_real_engine_refund_with_approval_and_crash, and with real Claude crash_after_refund.',
-        'No test crashes during the email or steps 3 and 4; the same rules are tested in stages 2, 5 and 7. Only the delivery is pretend: the demo shop writes the email to a file.',
+        'No test crashes during the email or steps 3 and 4; the same rules are tested in stages 5 and 7. Only the delivery is pretend: the demo shop writes the email to a file.',
         'Tested: test_approved_refund_runs_each_tool_once and test_real_engine_refund_with_approval_and_crash check the end: 4 Claude steps, each tool once, 1 refund.',
       ],
       // the Reject branch (after you press Reject): these replace now / ifPlug / proof of the stage it plays in.
-      // ifPlug is keyed by crash class like above ('before'/'after' Claude step 3's commit, else 'any').
+      // ifPlug is keyed by the crash class of the reject beats (story.js): s6.stampR 'wait' (before the
+      // stamp's impact) / 'after'; rj.step3 and rj.again 'before' / 'after' Claude step 3's commit; rj.done 'any'.
       reject: {
-        now: 'You rejected the refund, so issue_refund never runs. Claude step 3 is told "A human reviewer rejected this action. Do not retry it." and writes the final answer.',
+        now: 'You rejected the refund, so issue_refund never runs. Claude step 3 is told "A human reviewer rejected this action. Do not retry it." and writes the final answer. Nothing is erased: the notebook crosses out issue_refund to show it was rejected and never run.',
         ifPlug: {
+          // s6.stampR before its impact: the Update is written only once a worker is back (facts.md §4 st. 6)
+          wait: 'Your rejection is not written down yet. Nothing is lost: it is written once a worker is back, and no money moves.',
           before: 'Step 3 has not finished. It runs again and picks up the same conversation. No money moves either way.',
           // also shown during the Reject stamp (s6.stampR is 'after' once "rejected" is written, before step 3 runs)
           after: 'Everything so far is written down, so none of it runs again. No money moved.',
@@ -203,19 +223,23 @@ window.CONTENT = {
         proof: 'Tested: test_rejected_refund_moves_no_money, and with real Claude refund_rejected: the refund never runs and no money moves.',
       },
       // after a crash (in its stage): what happened, keyed by the outcome caption id (CONTENT.drawn.captions).
-      // retry: true adds retryNote and retryTable under it (GAME_SPEC §3 "Retries").
+      // retry: true adds retryNote and retryTable under it (GAME_SPEC §3 "Retries"). No attempt numbers or run
+      // counts here: a second crash in the same step makes it attempt 3 (the history line says which attempt).
       outcome: {
         out1: { text: 'Your request was written down before the crash. The new worker read it and carried on.', retry: false },
-        out2: { text: 'Step 1 had not finished. Temporal started it again (attempt 2), in a clean new conversation, from your request.', retry: true },
-        out4: { text: 'The lookup had not been written down. Temporal ran it again (attempt 2) with the same ID. Looking up an order twice does no harm.', retry: true },
+        out2: { text: 'Step 1 had not finished. A new worker started it again, in a clean new conversation, from your request.', retry: true },
+        out4: { text: 'The lookup had not been written down. A new worker ran it again with the same ID. Looking up an order twice does no harm.', retry: true },
         outSkip: { text: 'That step was already written down. The new worker read the saved result and did not run it again.', retry: false },
-        out5: { text: 'Step 2 had not finished. It ran again (attempt 2) and picked up the same conversation, with the saved answer.', retry: true },
-        out6: { text: 'Nothing was running while it waited, so nothing was lost. The approval still waits for the manager.', retry: false },
-        out7before: { text: 'The refund had not finished. Temporal ran it again (attempt 2) with the same receipt number. 2 runs, 1 refund.', retry: true },
-        out7money: { text: 'The shop had made the refund, but the answer was not saved. The retry (attempt 2) used the same receipt number, so the shop returned the refund it already made. 2 runs, 1 refund.', retry: true },
-        out8email: { text: 'The email had not been written down. It ran again (attempt 2) with the same receipt number, so the shop kept one email.', retry: true },
-        out8step3: { text: 'Step 3 had not finished. It ran again (attempt 2) and picked up the same conversation.', retry: true },
-        out8step4: { text: 'Step 4 had not finished. It ran again (attempt 2) and picked up the same conversation.', retry: true },
+        out5: { text: 'Step 2 had not finished. It ran again and picked up the same conversation, with the saved answer.', retry: true },
+        out6: { text: 'Nothing was running while it waited, so nothing was lost. A decision is only written while a worker is running.', retry: false },
+        out6approved: { text: 'Your approval (a validated Update) was written down before the crash. Nothing ran again, and the refund runs next.', retry: false },
+        out6rejected: { text: 'Your rejection was written down before the crash. Nothing ran again, and no money moves.', retry: false },
+        out6decided: { text: 'Nothing was running while it waited, so nothing was lost. Your decision is written now that a worker is back.', retry: false },
+        out7before: { text: 'The refund had not finished. A new worker ran it again with the same receipt number, and the shop made the refund once.', retry: true },
+        out7money: { text: 'The shop had made the refund, but the answer was not saved. The retry used the same receipt number, so the shop returned the refund it already made: still one refund.', retry: true },
+        out8email: { text: 'The email had not been written down. It ran again with the same ID, which is its own receipt number, so the shop kept one email.', retry: true },
+        out8step3: { text: 'Step 3 had not finished. It ran again and picked up the same conversation.', retry: true },
+        out8step4: { text: 'Step 4 had not finished. It ran again and picked up the same conversation.', retry: true },
         out9: { text: 'Everything was already written down. Nothing ran again.', retry: false },
       },
       wait: 'Nothing is written while it waits. Only manager@shop.example may approve: a validated Update.',
@@ -226,7 +250,7 @@ window.CONTENT = {
       noLookupTest: 'No test crashes during the lookup itself.',
       // a line under the notebook label (GAME_SPEC §5: "survives a worker crash", not "any crash")
       notebookNote: 'The workflow history. Every finished step is written here and survives a worker crash.',
-      retryNote: 'In real life Temporal first waits for a timeout, to notice that the worker is gone. The game skips that wait.',
+      retryNote: 'In real life Temporal first waits for a timeout, to notice that the worker is gone. The game skips that wait. The demo allows at most 6 attempts per Claude step or tool (FAST_RETRY in examples/refund_agent/workflows.py); the library\u2019s default retry policy has no limit, and the game follows the default.',
       retryTable: {
         head: ['Retried thing', 'Demo timeout', 'Default'],
         rows: [['Claude step (heartbeat)', '5 s', '2 min'], ['Tool (start-to-close)', '10 s', '1 min']],
@@ -258,6 +282,7 @@ window.CONTENT = {
       label: 'Stages',
       shop: 'Shop',
       stages: ['Request', 'Claude step 1', 'Claude pauses', 'Temporal runs the tool', 'Claude continues', 'You approve', 'The refund', 'Email and answer', 'Done'],   // short names, stages 1..9
+      rejectStage8: 'Claude answers',   // stage 8's name on the Reject path (no email there; ui.js when G.branch === 'reject')
       crashedBefore: 'crashed before',
       crashedAfter: 'crashed after',
     },
@@ -299,6 +324,7 @@ window.CONTENT = {
     ui: {
       reduced: 'Reduce motion',                // the reduced-motion toggle in the control bar (aria-pressed)
       toggles: 'Settings',                     // accessible name of the toggle group
+      keysToggle: 'Single-key shortcuts',      // #btn-keys (aria-pressed): turns P / A / R off (WCAG 2.1.4); added by the page owner
       keysLabel: 'Keyboard',
       // [key, what it does]: the legend under the panel (the shortcuts of GAME_SPEC §2 "Keys")
       keys: [['P', 'pull the plug, or plug it back in'], ['Space', 'pause'], ['A', 'approve'], ['R', 'reject'], ['Enter', 'next']],

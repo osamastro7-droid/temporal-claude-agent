@@ -193,6 +193,22 @@ window.SHOP = (() => {
     if (f1 > 0) pencilMarks(c, mailCel(1, L[1]), { progress: f1, alpha: a });
   }
 
+  /**
+   * A mail page given only its write-on u (story.js's s9.mail: u 0..1, no dyn.mail.lines): the two lines are
+   * the page's last parts, so u is shared out by length (SC.page's rule, stageC.js:347-349): the ring and the
+   * title get the first share (SC.page runs them on u' = their share of u), then "Hi <name>," and the second
+   * line write themselves. Without this the lines would be missing while u < 1 and then appear at once.
+   * A screen that sets dyn.mail.lines itself (SHOP.seq.mail) is returned as it is.
+   */
+  function mailWriteOn(s, name) {
+    const dm = (s.dyn ?? {}).mail ?? {}, u = s.u ?? 1;
+    if (dm.lines !== undefined || u >= 1) return s;
+    const D = mailPage(), tot = [...D.parts, D.title].reduce((a, p) => a + (p.cel ?? p).plan.total, 0);
+    const [l0, l1] = mailLens(name ?? { text: '', mode: 'font' }).map(t => t * 5200), all = tot + l0 + l1, U = u * all, f = clamp(U - tot, 0, l0 + l1);
+    const u1 = Math.min(1, U / tot);
+    return { ...s, u: u1, dyn: { ...s.dyn, mail: { ...dm, title: u1, note: u1, lines: f <= 0 ? 0 : f < l0 ? f / l0 : 1 + (f - l0) / l1 } } };
+  }
+
   // ---------- the checkout Name field ----------
   /**
    * Make the checkout page type THIS name (already fitted to NAME.BUDGET.field): NAME.install puts it into
@@ -291,8 +307,15 @@ window.SHOP = (() => {
   // ---------- the shop beats (story.js wraps these; see SHOP.seq) ----------
   const HOME = () => SC.HOME;
   const filmS = (key, tau) => ({ film: { act: key, tau } });
-  /** Reduced motion (GAME_SPEC §2 "Reduced motion"): instant page changes, the new page at once. */
-  const calm = (G, s) => (G && G.settings && G.settings.reduced && s.to && (s.slide ?? 0) > 0 ? { ...s, page: s.to, to: null, slide: 0, smear: 0 } : s);
+  /**
+   * Reduced motion (GAME_SPEC §2 "Reduced motion"): instant page changes, the new page at once. Exported
+   * as SHOP.calm so story.js can apply it to its own shop beats. Pure: returns a new screen, or s itself
+   * when nothing changes (not reduced, no slide in progress, or s null).
+   * @param {{settings?: {reduced?: boolean}}|null} G  game state
+   * @param {{page: string, to?: string|null, slide?: number, smear?: number}|null} s  a laptop screen (SHOP STATE .screen)
+   * @returns {object|null}
+   */
+  const calm = (G, s) => (s && G && G.settings && G.settings.reduced && s.to && (s.slide ?? 0) > 0 ? { ...s, page: s.to, to: null, slide: 0, smear: 0 } : s);
   const liveS = (G, screen, follow, name = null) => ({ at: HOME(), screen: calm(G, screen), live: true, follow: clamp(follow, 0, 1), name });
   const nameOf = G => fitName(G, 'field');
   const n1 = G => letters(nameOf(G));
@@ -375,8 +398,12 @@ window.SHOP = (() => {
     if (oc === null && om === null) return;
     const D = SC.DSP, V = SC.VIEW, A = s.alpha ?? 1;
     c.save(); SC.frame(c, at); c.beginPath(); c.rect(D.x + 3, D.y + 3, D.w - 6, D.h - 6); c.clip(); c.beginPath(); c.rect(V.x, V.y, V.w, V.h); c.clip();
-    if (oc !== null) { c.save(); c.translate(oc, 0); NAME.drawTyped(c, ((s.dyn ?? {}).checkout ?? {}).name ?? 0, A); c.restore(); }
-    if (om !== null) { c.save(); c.translate(om, 0); drawMailLines(c, name, ((s.dyn ?? {}).mail ?? {}).lines ?? 2, A); c.restore(); }
+    const both = dx => {
+      if (oc !== null) { c.save(); c.translate(oc + dx, 0); NAME.drawTyped(c, ((s.dyn ?? {}).checkout ?? {}).name ?? 0, A); c.restore(); }
+      if (om !== null) { c.save(); c.translate(om + dx, 0); drawMailLines(c, name, ((s.dyn ?? {}).mail ?? {}).lines ?? 2, A); c.restore(); }
+    };
+    // during a slide the page's ghosts trail to the right (stageC.js:437-438); these marks trail with it
+    if (s.to && (s.slide ?? 0) > 0 && (s.smear ?? 0) > 0) smear(c, 2, -s.smear, both); else both(0);
     c.restore();
   }
 
@@ -393,7 +420,9 @@ window.SHOP = (() => {
     const at = S.at ?? SC.HOME; let scr = S.screen ?? SC.END_A1;
     const shows = id => scr.page === id || scr.to === id;
     if (shows('mail')) mailPage();
-    const name = S.name ?? null;
+    // the checkout's name: S.name, else what NAME.install put into the field (story.js's shop beats build their
+    // screens without S.name; in fallback mode the letters are drawn here, by NAME.drawTyped in overlay())
+    const name = S.name ?? (shows('checkout') ? NAME.checkout : null) ?? null;
     if (name && shows('checkout')) field(name);
     if (S.pointer && S.live) {
       const k = S.follow ?? 1, b = scr.cursor ?? { x: S.pointer[0], y: S.pointer[1], a: 1 };
@@ -401,6 +430,7 @@ window.SHOP = (() => {
       scr = { ...scr, cursor: cur };
       if (scr.page === 'product' && !scr.to && k > .5) { const over = inBox([cur.x, cur.y], TAG) ? 1 : 0; scr.dyn = { ...scr.dyn, product: { ...(scr.dyn ?? {}).product, hover: over, hoverA: over } }; }
     }
+    if (scr.page === 'mail' && !scr.to) scr = mailWriteOn(scr, name);
     cam(c, CX, CY, 1); paperSheet(c);
     SC.body(c, { at });
     const lay = shows('mail') || (name && name.mode !== 'font' && shows('checkout'));
@@ -445,5 +475,5 @@ window.SHOP = (() => {
   }
   /** The timelines (tests and the story builder: caption times such as the P2 crack, A2.capT0). */
   const times = G => ({ a1: film1(), p1: p1(n1(G)), a2: film2(), cut: WINDOWS.a3[1], mail: mailTimes(fitName(G, 'mail')) });
-  return { WINDOWS, RATE, init, act, film, filmCaption, frame, pointer, hotspots, seq, times, field, fitName };
+  return { WINDOWS, RATE, init, act, film, filmCaption, frame, pointer, hotspots, seq, times, field, fitName, calm };
 })();

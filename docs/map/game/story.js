@@ -45,8 +45,10 @@
 //   + ink:       [ {row, part:'t'|'c'|'strike', t0} ]   when each committed mark started to be written
 //                (G.clock). Drawn progress = clamp((G.clock - t0) / STORY.INK_DUR[part], 0, 1): it
 //                runs on the GAME clock, so a committed line finishes even in the dark (GAME_SPEC §1.4).
-//     events:    [ {text, stage, at} ]   history lines for the panel (and the tests), text final
-//                (placeholders already filled); at = G.clock when it was written. Only real history
+//     events:    [ {text, stage, at, retryOf?} ]   history lines for the panel (and the tests), text final
+//                (placeholders already filled); at = G.clock when it was written; retryOf = the Activity key
+//                (G.world.attempts) of a retry line: a later retry of it REPLACES that line (story.js run(),
+//                facts.md §3: one STARTED line per Activity, with the last attempt). Only real history
 //                events go here: the "(nothing is written while it waits for approval)" line of facts.md
 //                §3 is a NOTE, not an event (CONTENT.html.panel.waitNote). tests/web/fixtures/
 //                history-approved.json uses §3's wording for the refund line: "... (also the receipt
@@ -61,7 +63,7 @@
 //                step4}: how many times each Activity started (the retry lines' attempt numbers).
 //     worker:    { phase: 'on'|'pulling'|'dark'|'pushing'|'waking'|'notes'|'recover', t0 }
 //                the crash controller's phase and the G.clock at which it began (runtime.js).
-//              + c0, u0, when, saved, rec, caps, prev, sparked, powered: set by runtime at the plug click
+//              + c0, u0, when, saved, rec, caps, prev, sparked, powered, hq: set by runtime at the plug click
 //                and kept until 'on' again: c0 = G.clock at the plug click, u0 = G.clock at the unplug
 //                click (null before); ROOM.crash gets them as K.tc / K.tu (seconds since), and every
 //                crash time is ROOM.CRASH_T's (room.js). when = STORY.crashWhen(G) at the click; saved =
@@ -69,7 +71,10 @@
 //                and its start q, computed ONCE at 'pushing' (STORY.recoverFor(G); q = G.frozenQ when id
 //                is the frozen beat, else 0); caps = the frozen beat's held captions, re-queued only if
 //                that beat is resumed; prev = null | {phase, t, tu, rec} the recovery a re-crash
-//                interrupted (see THE CRASH); sparked / powered = SFX_LIVE.crash() / power() done.
+//                interrupted (see THE CRASH); sparked / powered = SFX_LIVE.crash() / power() done;
+//                hq = null | the hold's idle time (G.clock - G.hold.t0) at the plug click (a re-crash keeps
+//                the first one): the hold idle stops with the story (STORY.viewR draws hold.idle(G, hq)) and
+//                goes on from there if the frozen beat resumes (runtime sets G.hold.t0 = G.clock - hq).
 //     approval:  { waiting: bool, decision: null|'approve'|'reject', queued: null|'approve'|'reject' }
 //                queued = decided while the power was off; applied after the notes (GAME_SPEC §4 st. 6).
 //     branch:    'approve'|'reject'
@@ -77,16 +82,22 @@
 //                in order; outcome = the outcome caption id, set by runtime at 'recover' (panel note).
 //                The rail shows STORY.railMark(crash): before|money|wait -> 'crashedBefore',
 //                after -> 'crashedAfter', any -> 'crashedBefore' in stage 2 (step 1 starts over),
-//                else 'crashedAfter' (CONTENT.html.rail keys).
+//                else 'crashedAfter' (CONTENT.html.rail keys); null (no words) while the crash is still
+//                going on (no outcome yet and not past).
 //     settings:  { sound: bool, reduced: bool, stepMode: bool, paused: bool }
 //   + clock:     number   game seconds since STORY.newGame (runtime.js advances it)
-//   + cap:       { now: null|{id, t0, out, cut}, queue: [{id, tMin, beat}], last: number }   caption
+//   + cap:       { now: null|{id, t0, out, cut}, queue: [{id, tMin, beat, tag?}], last: number }   caption
 //                scheduler (runtime.js): now.t0/out in G.clock; last = G.clock when the previous caption
 //                ended (-1 at start). A queued caption waits until G.q >= tMin while its beat plays
 //                (beat null = no condition; a caption whose beat has already ended shows at once).
+//                tag: 'crash' on every caption the crash controller queues itself ('crash', 'crashAgain',
+//                the outcome); absent on the story's. A new plug pull drops the tagged ones (a new crash
+//                supersedes the old notes and outcome) and holds back the untagged ones (worker.caps).
 //                Caption rule GAME_SPEC §1.8.
 //   + hold:      null|{ t0, step? }   set while a hold beat waits for the player (hq = clock - hold.t0);
 //                step: true = step mode stopped at a stage boundary; STORY.action offers 'next'.
+//   + answerOut: null|R.wait   set by STORY.onPlug: a step's saved answer slip still out of his badge at the
+//                click (the recovery intro starts from it, not from the notebook; story.js slipFromOut)
 //   + hint:      null|string   a CONTENT.html key shown in the panel's "Now" until the next plug pull
 //                (act 'break' sets 'tryBreakHint').
 //   + dirty:     bool   runtime sets it to force a redraw on the next frame (input, resize)
@@ -122,9 +133,11 @@
 //              a8 flipA/flipB), approved 0..1, rejected 0..1 (stamp impressions), glow 0..1 (saved,
 //              in the dark), drop 0..1 (falls and fades: the worker's slip on a crash before commit),
 //              wob: null|0..3 (a8 WOB drawing index), pause 0..1 (pause sign next to the slip),
-//              clip: null|'badge' (only the part above his badge slot shows: rising out / sinking in) }
-//     stamp:   null | { k: a8 drawing index (a8.js:164-173 stampPose: 0 high with streaks, < K_IMPACT
-//              coming down, < K_LIFT on the slip, then lifting, gone), word: 'approved'|'rejected',
+//              clip: null|'badge' (only the part above his badge slot shows: rising out / sinking in; the
+//              slot is ROOM.badgeOf(R.pose), so a slip in the slot starts at that point, turned by its lean) }
+//     stamp:   null | { k: a8 drawing index (a8.js:164-173 stampPose: 0 high with streaks, < STAMP_K.impact
+//              coming down, < STAMP_K.lift on the slip, then lifting, gone at STAMP_K.end; ROOM.STAMP_K),
+//              word: 'approved'|'rejected',
 //              hover?: bool (drawing 0 held high while the power is off) }. ROOM draws it relative to
 //              R.wait: x = wait.x, y = wait.y + (stampPose(k).y - a8 MID.y) * wait.s, scale wait.s.
 //     clock:   null | { u: 0..1 draw-on, angle: minute-hand angle (rad), alpha: 0..1 }
@@ -132,15 +145,19 @@
 //     envelope:{ state: 'none'|'desk'|'fly'|'drop'|'gone', u: 0..1 draw-on, fly: 0..1 (a9 flightAt
 //              progress for 'fly', a4 mail() drop progress for 'drop') }
 //   + dash:    null | { u: 0..1, alpha }   indigo dashed line notebook -> cabinet (stage 4, a7 style)
-//     pencils: [ {x, y, color: 'graphite'|'indigo'|'red'|'green', lift: 0..1, angle?} ]   visible
-//              pencil tools, room world tip positions (drawPencilTool)
+//     pencils: null/absent | [ {x, y, color: 'graphite'|'indigo'|'red'|'green', lift: 0..1, angle?} ]
+//              absent (the default) = ROOM places them itself at the tip of whatever is being drawn (see
+//              room.js PENCILS); an array = exactly those pencil tools (drawPencilTool), room world tips.
+//              story.js sets an array only while a pencil glides in or away lifted (nothing to place it
+//              at) and never while the story is frozen (a crash: only the room decides what shows)
 //     q, q2:   0..1 the red "?" (film prop; the game keeps it 0)
 //     led:     0|1 printer LED on
 //   + notes:   null | N   set only in scene 'notes': the close-up (ROOM.notes) instead of the room
 //              N = { rows: [{t, c, strike} x 6] (0..1), branch, under: [0..1 x 6] (indigo underline
-//              per saved line), ring: null|{row, part: 't'|'c', u: 0..1}, arrow: null|{row,
-//              part: 't'|'c', u: 0..1 (grows in, a9.js:326 k), pulse: 0..1 (|sin|; a9 alpha = .65 + .35 *
-//              pulse)}, alpha: 0..1 }
+//              per saved line, LINEAR: ROOM.notes eases it), ring: null|{row, part: 't'|'c', u: 0..1},
+//              arrow: null|{row, part: 't'|'c', u: 0..1 (grows in, a9.js:326 k), pulse: 0..1 the PHASE
+//              ((t - t0) * 1.5) % 1, .5 when reduced (ROOM: alpha .65 + .35 |sin(pi pulse)|)}, alpha: 0..1,
+//              glow?: 0..1 the rows' halo (a9 sm(0, .6, t); 1 when reduced) }
 //   }
 //
 // SHOP STATE  S  (what SHOP.frame(c, S) draws in scenes 'shop' and 'mail'; built by the beat's R)
@@ -185,8 +202,9 @@
 //
 // THE CRASH (runtime.js owns the phases; story.js owns the decisions; room.js owns the timetable,
 // ROOM.CRASH_T, which runtime's phase switches and sound calls are derived from)
-//   click plug -> runtime: G.frozenQ = G.q; G.crashes.push({stage, when: STORY.crashWhen(G)});
-//   G.worker.when/saved (STORY.saved) are fixed there; queued captions of the frozen beat are held back.
+//   click plug -> runtime: G.frozenQ = G.q; STORY.onPlug(G) (the one write a crash causes: stage 1's
+//   request, see onPlug); G.crashes.push({stage, when: STORY.crashWhen(G)}); G.worker.when/saved
+//   (STORY.saved, read-only) are fixed there; queued captions of the frozen beat are held back.
 //   phases 'pulling' (hand 4 drawings, pull .134 s, the spark 1/12 s after the pull starts) -> 'dark'
 //   (hold until 'unplug') -> 'pushing' (G.worker.rec = STORY.recoverFor(G), ONCE; from the push's
 //   landing, CRASH_T.power, ROOM.crash draws the worker's props from that beat's R: the props snap)
@@ -195,7 +213,8 @@
 //   then the recovery beat (resumed at frozenQ if it is the frozen beat), G.frozenQ = null, phase 'on'.
 //   A CRASH DURING A RECOVERY (a crash while he wakes, a double crash; GAME_SPEC §10 test 2): the plug
 //   is live again in 'waking' and in 'notes' outside the close-up (STORY.plugState). The story is still
-//   frozen: G.frozenQ and G.beat stay. runtime pushes a new crash record, recomputes when and saved
+//   frozen: G.frozenQ and G.beat stay. runtime calls STORY.onPlug(G) again (a no-op then), pushes a new
+//   crash record, recomputes when and saved
 //   from G, MERGES the held captions (the old worker.caps are kept), sets rec = null (the next unplug
 //   decides the recovery again, from the same book and world) and stores prev = {phase, t, tu, rec} of
 //   the interrupted recovery; ROOM.crash (K.prev) slumps him from the wake/lift inbetween at prev.tu and
@@ -255,11 +274,18 @@ window.STORY = (() => {
   /** Replace {name}, {slug}, {n}, ... in a CONTENT string. @returns {string} */
   const fill = (s, v) => String(s).replace(/\{(\w+)\}/g, (m, k) => (k in v ? String(v[k]) : m));
   /** An Activity starts (again): count the attempt in G.world (tool runs: lookups, refundRuns, emailRuns);
-   *  a retry writes "<what> started again (attempt n)" (GAME_SPEC §3 "Retries"). */
+   *  a retry writes "<what> started again (attempt n)" (GAME_SPEC §3 "Retries"). The real history keeps ONE
+   *  ACTIVITY_TASK_STARTED line per Activity, with the last attempt (facts.md §3): failed attempts get no line
+   *  of their own. A key's retries all belong to one unfinished Activity (a finished one never runs again), so
+   *  the earlier retry line of this key (tagged retryOf) is replaced by the new one, where the latest crash was. */
   function run(G, key, retry) {
     const W = G.world, A = W.attempts ?? (W.attempts = {}), n = A[key] = (A[key] ?? 0) + 1;
     if (key === 'lookup') W.lookups = n; if (key === 'refund') W.refundRuns = n; if (key === 'email') W.emailRuns = n;
-    if (retry) log(G, 'retry', { what: (H().retryWhat ?? {})[key] ?? key, n });
+    if (retry) {
+      G.events = G.events.filter(e => e.retryOf !== key);
+      log(G, 'retry', { what: (H().retryWhat ?? {})[key] ?? key, n });
+      G.events[G.events.length - 1].retryOf = key;
+    }
   }
 
   // =============================================================================================
@@ -282,14 +308,12 @@ window.STORY = (() => {
     for (const i of inkPlan(G)) rows[i.row][i.part] = Math.max(rows[i.row][i.part], clamp((G.clock - i.s0) / i.d, 0, 1));
     return rows;
   }
-  /** Where the indigo pencil's tip is on a row mark at progress u (room world). ROOM.bookTip when the room
-   *  exports it (it owns the desk notebook's drawing); else a9's row(k) scrawl geometry (a9.js:102): three
-   *  rows per page, rows 0-2 on the left page, 3-5 on the right. */
+  /** Where the indigo pencil's tip is on a row mark at progress u (room world): ROOM.bookTip (the room owns
+   *  the desk notebook's drawing: the tip of the very cel it draws); else a9's row(k) scrawl geometry
+   *  (a9.js:102): three rows per page, rows 0-2 on the left page, 3-5 on the right. */
   function rowTip(row, part, u) {
     if (typeof ROOM.bookTip === 'function') return ROOM.bookTip(row, part, u);
-    const N = ROOM.NB, cel = celOf('game/nb-row' + ({ t: 't', c: 'c', strike: 's' }[part] ?? 't') + row);   // room.js build(): d.rowT / rowC / rowS
-    if (cel) return RMx().celTip(cel, clamp(u, 0, 1), N.x, N.y);
-    const L = row < 3, j = L ? row : row - 3, y = -14 - j * 10, x0 = L ? -76 + j * 3 : 12 + j * 2, w = L ? 46 - j * 3 : 44 - j * 3;   // room.js deskRow
+    const N = ROOM.NB, L = row < 3, j = L ? row : row - 3, y = -14 - j * 10, x0 = L ? -76 + j * 3 : 12 + j * 2, w = L ? 46 - j * 3 : 44 - j * 3;   // room.js deskRow
     if (part === 'c') return [N.x + x0 + w + 2 + u * 10, N.y + y + (u < .35 ? u * 10 : 3.5 - (u - .35) * 16)];
     return [N.x + x0 + u * w, N.y + y + (part === 'strike' ? -4 : 0)];
   }
@@ -301,17 +325,20 @@ window.STORY = (() => {
   // =============================================================================================
   const RMx = () => window.V2G2ROOM;
   /** His Claude badge (agent.js:69, agent-local (0, -164) on his chest): the slot the slips rise out of
-   *  (GAME_SPEC §1.2, a8's "box slot"). ROOM.BADGE when the room exports it. */
-  const badge = () => ROOM.BADGE ?? { x: SD.AG.x, y: SD.AG.y - 164 * SD.AG.s };
+   *  (GAME_SPEC §1.2, a8's "box slot"), for the pose he is in: ROOM.badgeOf(pose) = {x, y, lean}, the same
+   *  point and tilt room.js clips a clip:'badge' slip at (else ROOM.BADGE, upright). */
+  const badge = pose => (typeof ROOM.badgeOf === 'function' ? ROOM.badgeOf(pose ?? 'rest') : { lean: 0, ...(ROOM.BADGE ?? { x: SD.AG.x, y: SD.AG.y - 164 * SD.AG.s }) });
   /** a8 slip constants (a8.js:61-62): LOW = the slip's size in the slot; it rises tilted toward his raised
    *  right arm (GAME DECISION: a8's slot has nothing above it, his face is above the badge), then flies to
    *  WAIT (room.js ROOM.WAIT, s .85 >= .81) and rests at a8's REST tilt. */
   const SL = { LOW: .45, UP: -Math.PI / 2 + .6, REST: -.03, HOP: 28 };
   const slipHL = s => (SB.slipW ? SB.slipW() : 477) * s / 2;
   const along = (p, d, h) => [p[0] + Math.cos(d) * h, p[1] + Math.sin(d) * h];
-  /** just out of the badge (a8 P0) / fully inside it (a8 bottomY) */
-  const slotOut = () => { const b = badge(); return along([b.x, b.y], SL.UP, slipHL(SL.LOW) + 6); };
-  const slotIn = () => { const b = badge(); return along([b.x, b.y], SL.UP, -slipHL(SL.LOW) - 3); };
+  /** just out of the badge (a8 P0) / fully inside it (a8 bottomY), along the slot's direction (SL.UP turned
+   *  by his lean); b = badge(pose) */
+  const upOf = b => SL.UP + (b.lean ?? 0);
+  const slotOut = b => along([b.x, b.y], upOf(b), slipHL(SL.LOW) + 6);
+  const slotIn = b => along([b.x, b.y], upOf(b), -slipHL(SL.LOW) - 3);
   const WAITP = () => [ROOM.WAIT.x, ROOM.WAIT.y];
   /** a8 fly(u, a, b) (a8.js:127): an eased move with a small hop */
   const hop = (u, a, b) => { const e = easeIO(u); return [lerp(a[0], b[0], e), lerp(a[1], b[1], e) - SL.HOP * 4 * e * (1 - e)]; };
@@ -319,33 +346,40 @@ window.STORY = (() => {
   function wobAt(q, starts) { for (const t0 of starts) { const k = Math.round((q - t0) * 12); if (k >= 0 && k < 4) return k; } return null; }
   /** the idle fidget while a call waits: every 1.25 s from t0 (GAME_SPEC §4 st. 6, a8.js:144-148) */
   const wobEvery = (q, t0) => { if (q < t0) return null; const k = Math.round(((q - t0) % 1.25) * 12); return k < 4 ? k : null; };
+  /** reduced motion: no fidget (the repeating jitter goes, like the flicker and the pulse) */
+  const calmWob = (G, k) => (reduced(G) ? null : k);
   /** A waiting slip (story.js SCHEMAS R.wait) with a8's defaults. */
   const slipAt = (which, p, o = {}) => ({ which, x: p[0], y: p[1], s: ROOM.WAIT.s, rot: SL.REST, sy: 1, approved: 0, rejected: 0, glow: 0, drop: 0, wob: null, pause: 1, clip: null, ...o });
   /**
-   * A tool slip going out (a8 slipPose rise/fly, a8.js:130-131, re-timed): out of his badge (clipped at
-   * the slot), then an arc to WAIT, growing .45 -> .85. null before it starts.
+   * A tool slip going out (a8 slipPose rise/fly, a8.js:130-131, re-timed): out of his badge (clip 'badge'
+   * at ROOM.badgeOf(pose): the slot moves and tilts with him), then an arc to WAIT, growing .45 -> .85.
+   * null before it starts. pose = R.pose at q (the same one room.js clips at).
    */
-  function slipOut(which, q, rise, fly, o = {}) {
+  function slipOut(which, q, rise, fly, o = {}, pose) {
     if (q < rise[0]) return null;
-    if (q < rise[1]) { const u = sm(rise[0], rise[1], q, easeOut), a = slotIn(), b = slotOut(); return slipAt(which, [lerp(a[0], b[0], u), lerp(a[1], b[1], u)], { s: SL.LOW, rot: SL.UP, clip: 'badge', pause: 0, ...o }); }
-    if (q < fly[1]) { const u = sm(fly[0], fly[1], q, lin), p = hop(u, slotOut(), WAITP()); return slipAt(which, p, { s: lerp(SL.LOW, ROOM.WAIT.s, easeIO(u)), rot: lerp(SL.UP, SL.REST, easeOut(u)), pause: 0, ...o }); }
+    const bd = badge(pose);
+    if (q < rise[1]) { const u = sm(rise[0], rise[1], q, easeOut), a = slotIn(bd), b = slotOut(bd); return slipAt(which, [lerp(a[0], b[0], u), lerp(a[1], b[1], u)], { s: SL.LOW, rot: upOf(bd), clip: 'badge', pause: 0, ...o }); }
+    if (q < fly[1]) { const u = sm(fly[0], fly[1], q, lin), p = hop(u, slotOut(bd), WAITP()); return slipAt(which, p, { s: lerp(SL.LOW, ROOM.WAIT.s, easeIO(u)), rot: lerp(upOf(bd), SL.REST, easeOut(u)), pause: 0, ...o }); }
     return slipAt(which, WAITP(), o);
   }
-  /** The answer going back into his badge (a8 back/sink, a8.js:136-137, re-timed). null once it is in. */
-  function slipBack(which, q, back, sink, o = {}) {
+  /** The answer going back into his badge (a8 back/sink, a8.js:136-137, re-timed), into ROOM.badgeOf(pose).
+   *  null once it is in. */
+  function slipBack(which, q, back, sink, o = {}, pose) {
     if (q < back[0]) return slipAt(which, WAITP(), o);
-    if (q < back[1]) { const u = sm(back[0], back[1], q, lin), p = hop(u, WAITP(), slotOut()); return slipAt(which, p, { s: lerp(ROOM.WAIT.s, SL.LOW, easeIO(u)), rot: lerp(SL.REST, SL.UP, easeIn(u)), ...o }); }
-    if (q < sink[1]) { const u = sm(sink[0], sink[1], q, easeIn), a = slotOut(), b = slotIn(); return slipAt(which, [lerp(a[0], b[0], u), lerp(a[1], b[1], u)], { s: SL.LOW, rot: SL.UP, clip: 'badge', ...o }); }
+    const bd = badge(pose);
+    if (q < back[1]) { const u = sm(back[0], back[1], q, lin), p = hop(u, WAITP(), slotOut(bd)); return slipAt(which, p, { s: lerp(ROOM.WAIT.s, SL.LOW, easeIO(u)), rot: lerp(SL.REST, upOf(bd), easeIn(u)), ...o }); }
+    if (q < sink[1]) { const u = sm(sink[0], sink[1], q, easeIn), a = slotOut(bd), b = slotIn(bd); return slipAt(which, [lerp(a[0], b[0], u), lerp(a[1], b[1], u)], { s: SL.LOW, rot: upOf(bd), clip: 'badge', ...o }); }
     return null;
   }
   /** A SAVED answer coming back out of the notebook into his badge (GAME_SPEC §1.3 "saved things come back
    *  out of the notebook"; st. 5 "the saved answer rises out of the notebook into his badge"): it glows. */
-  function slipFromBook(which, q, rise, fly, sink, o = {}) {
+  function slipFromBook(which, q, rise, fly, sink, o = {}, pose) {
     const N = ROOM.NB, from = [N.x, N.y - 20], up = [N.x + 10, N.y - 150];
     if (q < rise[0]) return null;
-    if (q < rise[1]) { const u = sm(rise[0], rise[1], q, easeOut); return slipAt(which, [lerp(from[0], up[0], u), lerp(from[1], up[1], u)], { s: lerp(.25, SL.LOW, u), rot: lerp(-.2, SL.UP, u), glow: .7 * (1 - u * .4), pause: 0, ...o }); }
-    if (q < fly[1]) { const u = sm(fly[0], fly[1], q, lin); return slipAt(which, hop(u, up, slotOut()), { s: SL.LOW, rot: SL.UP, glow: .42 * (1 - u), pause: 0, ...o }); }
-    if (q < sink[1]) { const u = sm(sink[0], sink[1], q, easeIn), a = slotOut(), b = slotIn(); return slipAt(which, [lerp(a[0], b[0], u), lerp(a[1], b[1], u)], { s: SL.LOW, rot: SL.UP, clip: 'badge', pause: 0, ...o }); }
+    const bd = badge(pose);
+    if (q < rise[1]) { const u = sm(rise[0], rise[1], q, easeOut); return slipAt(which, [lerp(from[0], up[0], u), lerp(from[1], up[1], u)], { s: lerp(.25, SL.LOW, u), rot: lerp(-.2, upOf(bd), u), glow: .7 * (1 - u * .4), pause: 0, ...o }); }
+    if (q < fly[1]) { const u = sm(fly[0], fly[1], q, lin); return slipAt(which, hop(u, up, slotOut(bd)), { s: SL.LOW, rot: upOf(bd), glow: .42 * (1 - u), pause: 0, ...o }); }
+    if (q < sink[1]) { const u = sm(sink[0], sink[1], q, easeIn), a = slotOut(bd), b = slotIn(bd); return slipAt(which, [lerp(a[0], b[0], u), lerp(a[1], b[1], u)], { s: SL.LOW, rot: upOf(bd), clip: 'badge', pause: 0, ...o }); }
     return null;
   }
   /** a8 flipA/flipB (a8.js:133-134): the slip turns edge-on and shows its other side (sy 1 -> 0 -> 1). */
@@ -354,6 +388,20 @@ window.STORY = (() => {
   // ---- pencils (room world tips; drawPencilTool). Homes are off the frame (screen = (w - CAM) * 1.12 + C).
   const HOME = { graphite: [2240, 650], indigo: [700, 1320], green: [1560, 1230] };   // a3 room home [W+320, H*.6]; a9 home [1560, 1230]
   const pencil = (p, color, lift, angle) => ({ x: p[0], y: p[1], color, lift: clamp(lift, 0, 1), ...(angle !== undefined ? { angle } : {}) });
+  /** a pencil gliding in or away between marks (never quite down: lift > 0 is what marks a glide) */
+  const glide = (p, color, lift) => pencil(p, color, Math.max(.01, lift));
+  /**
+   * The pencils rule (room.js PENCILS): R.pencils absent = ROOM places each pencil at the tip of whatever
+   * is being drawn (the same cels, so the same points as ours). We only hand ROOM an explicit list while
+   * a pencil glides in or away (lifted, not at any mark: ROOM cannot know where it is), and then the list
+   * holds every pencil on the sheet (the tips we computed too). Never while the story is frozen: in a
+   * crash the room alone decides what shows (only Temporal's pencil works in the dark, GAME_SPEC §1.4).
+   */
+  function settlePencils(G, R) {
+    if (!R || !('pencils' in R)) return R;
+    if (G.frozenQ !== null || !Array.isArray(R.pencils) || !R.pencils.some(p => p.lift > 0)) delete R.pencils;
+    return R;
+  }
   /** Temporal's indigo pencil: it writes each committed mark (inkPlan, on the game clock, so it keeps
    *  writing in the dark), glides in just before a commit the beat is about to make, and leaves after. */
   function inkPencil(G, b, q) {
@@ -361,13 +409,16 @@ window.STORY = (() => {
     let cur = null; for (const i of plan) if (i.s0 <= now) cur = i;
     if (cur) {
       const e = cur.s0 + cur.d;
-      if (now < e) return pencil(rowTip(cur.row, cur.part, clamp((now - cur.s0) / cur.d, 0, 1)), 'indigo', 0);
-      if (now < e + .5) { const u = (now - e) / .5, a = rowTip(cur.row, cur.part, 1); return pencil([lerp(a[0], HOME.indigo[0], easeIn(u)), lerp(a[1], HOME.indigo[1], easeIn(u))], 'indigo', u * 3); }
+      // a mark's first drawing (progress 0): ROOM draws no tip for it (inkRows skips u <= 0), so it stays
+      // ours, as a glide at the mark's start (lift .01: settlePencils keeps the list), never a blank drawing
+      const u = clamp((now - cur.s0) / cur.d, 0, 1);
+      if (now < e) return u <= 0 ? glide(rowTip(cur.row, cur.part, 0), 'indigo', .01) : pencil(rowTip(cur.row, cur.part, u), 'indigo', 0);
+      if (now < e + .5) { const u = (now - e) / .5, a = rowTip(cur.row, cur.part, 1); return glide([lerp(a[0], HOME.indigo[0], easeIn(u)), lerp(a[1], HOME.indigo[1], easeIn(u))], 'indigo', u * 3); }
     }
     // coming in for the beat's next commit (only while the story runs: in the dark it has nothing to write)
     if (b && G.frozenQ === null && b.commit) {
       const cm = (Array.isArray(b.commit) ? b.commit : [b.commit]).find(c => c.t > q - 1e-9 && c.t - q <= .42);
-      if (cm) { const u = 1 - (cm.t - q) / .42, a = rowTip(cm.row, cm.part === 'c' && !G.book[cm.row].t ? 't' : cm.part, 0); return pencil([lerp(HOME.indigo[0], a[0], easeOut(u)), lerp(HOME.indigo[1], a[1], easeOut(u))], 'indigo', 1 - u * .8); }
+      if (cm) { const u = 1 - (cm.t - q) / .42, a = rowTip(cm.row, cm.part === 'c' && !G.book[cm.row].t ? 't' : cm.part, 0); return glide([lerp(HOME.indigo[0], a[0], easeOut(u)), lerp(HOME.indigo[1], a[1], easeOut(u))], 'indigo', 1 - u * .8); }
     }
     return null;
   }
@@ -412,7 +463,13 @@ window.STORY = (() => {
       parts: { agent: 1, printer: 1, tray: 1, book: 1, clock: 1 },
     };
   }
-  const roomBeat = (id, o) => ({ id, scene: 'room', captions: [], events: [], ...o });
+  /** A room beat: its R and hold idle hand ROOM their pencils by the pencils rule (settlePencils). */
+  const roomBeat = (id, o) => {
+    const b = { id, scene: 'room', captions: [], events: [], ...o }, R0 = b.R;
+    if (R0) b.R = (G, q) => settlePencils(G, R0(G, q));
+    if (b.hold) { const i0 = b.hold.idle; b.hold = { ...b.hold, idle: (G, hq) => settlePencils(G, i0(G, hq)) }; }
+    return b;
+  };
 
   // =============================================================================================
   // THE SHOP (stage 0): P1 Buy and P2 Broken (GAME_SPEC §4). Film windows, then the live SC.screen.
@@ -435,6 +492,10 @@ window.STORY = (() => {
   }
   /** The name as the checkout field types it: letters of the fitted name (NAME.install fits it the same way). */
   const typedName = G => NAME.fit(G.drawnName || '', G.nameMode, NAME.BUDGET.field);
+  /** the typed name's letters, split the way nameN counts them (graphemes when NAME.install does) */
+  const nameLetters = G => { const t = typedName(G), cp = [...t], n = nameN(G);
+    if (cp.length === n || typeof Intl === 'undefined' || !Intl.Segmenter) return cp;
+    return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(t)].map(x => x.segment); };
   const nameN = G => { const P = SC.D && SC.D.checkout && SC.D.checkout.name; return Math.max(1, (P && P.n) || [...typedName(G)].length); };   // NAME.install's letters (code points or graphemes)
   /** checkout: times after the Buy click (a1.js:52-54: toName, clickName, name at 14 letters/s, addr) */
   function Tco(n) {
@@ -451,8 +512,26 @@ window.STORY = (() => {
     const s1 = slideT(), toReason = [s1[1] + .04, s1[1] + .39], click = g12(toReason[1] + .08), n = (SC.D.reason && SC.D.reason.typed && SC.D.reason.typed.n) || 14, type = [click + .12, click + .12 + n / 18];
     return { s1, load: [.08, s1[1] - .04], toReason, click, n, type, end: type[1] + .1 };
   }
-  const shopBeat = (id, o) => ({ id, stage: 0, scene: 'shop', captions: [], events: [], noPlug: 'plugShop', ...o });
-  const filmR = (key, q) => ({ film: { act: key, tau: Wn(key)[0] + clamp(q, 0, winDur(key)) } });
+  /** reduced motion: instant page changes (shop.js calm): a sliding screen shows its new page at once */
+  const reduced = G => !!(G && G.settings && G.settings.reduced);
+  const calmS = (G, s) => (reduced(G) && s && s.to ? { ...s, page: s.to, to: null, slide: 0, smear: 0 } : s);
+  const calmR = (G, r) => (r && r.screen && reduced(G) ? { ...r, screen: calmS(G, r.screen) } : r);
+  const shopBeat = (id, o) => {
+    const b = { id, stage: 0, scene: 'shop', captions: [], events: [], noPlug: 'plugShop', ...o }, R0 = b.R;
+    if (R0) b.R = (G, q) => calmR(G, R0(G, q));
+    if (b.hold) { const i0 = b.hold.idle; b.hold = { ...b.hold, idle: (G, hq) => calmR(G, i0(G, hq)) }; }
+    return b;
+  };
+  /** the a3 camera push (shop.js a3Cut: [p0, p0 + .72], p0 = a3's second whoosh - .2); reduced motion cuts over it */
+  let _push;
+  const a3Push = () => { if (_push !== undefined) return _push; const a = SHOP.act && SHOP.act('a3'), w = a && a.cues ? a.cues.filter(k => k.type === 'whoosh')[1] : null;
+    return (_push = w ? [w.t - .2, +(w.t - .2 + .72).toFixed(6)] : null); };
+  const filmR = (key, q, G) => {
+    let tau = Wn(key)[0] + clamp(q, 0, winDur(key));
+    const P = key === 'a3' && reduced(G) ? a3Push() : null;
+    if (P && tau >= P[0] && tau < P[1]) tau = Math.min(P[1], Wn(key)[1]);
+    return { film: { act: key, tau } };
+  };
   /** a film act's own caption start, relative to the window (a1 .5, a2 at the crack: a2.js:60) */
   const filmCapT = (key, dflt) => { const a = SHOP.act && SHOP.act(key), k = a && a.captions && a.captions[0]; return (k && Number.isFinite(k.t0) ? k.t0 : dflt) - Wn(key)[0]; };
 
@@ -465,6 +544,14 @@ window.STORY = (() => {
     const back0 = g12(w - .12), back1 = back0 + .75, wake0 = back1 - .08, o0 = g12(wake0 + .2), o1 = o0 + SC.pageLen('orders') / 14000;
     return (_a2 = { orders: [o0, o1], toRefund: g12(o1 - .2) });
   }
+  /** the orders page t seconds after a2's window: "My orders" writing itself, the cursor gliding to Request refund */
+  function ordersAt(t, live) {
+    const T = Ta2(), W1 = Wn('a2')[1], q = tw(t);
+    return { at: SC.HOME, live, screen: lit('orders', { u: sm(T.orders[0], T.orders[1], W1 + t, lin), dyn: { orders: { press: 0 } },
+      cursor: SC.cursorTrack(q, AT().wake, [{ t: [T.toRefund - W1, T.toRefund - W1 + .5], to: AT().refund, lift: 30 }], []) }) };
+  }
+  /** shop.broken's length: the window, or until the drawn Request refund button is complete (on the twos grid) */
+  const brokenDur = () => Math.max(winDur('a2'), Math.ceil((Ta2().orders[1] - Wn('a2')[0] + .04) * 12 - 1e-9) / 12);
   const shopBeats = [
     // P1: the a1 window (the laptop draws itself, the product page), then the live product page.
     shopBeat('shop.product', {
@@ -486,7 +573,10 @@ window.STORY = (() => {
       R: (G, q) => checkoutAt(G, q, null),
       hold: { action: 'pay', idle: (G, hq) => checkoutAt(G, Tco(nameN(G)).end + hq, hq) },
       sfx: G => { const T = Tco(nameN(G)), n = nameN(G), out = [[0, 'click', { k: 0 }], [T.s1[0], 'swipe', { k: 0 }], [T.click, 'click', { k: 1 }]];
-        for (let i = 0; i < n; i++) out.push([T.name[0] + i / 14, 'key', { k: i }]); return out; },
+        const L = nameLetters(G);
+        for (let i = 0; i < n; i++) out.push([T.name[0] + i / 14, 'key', { k: i, space: L[i] === ' ' }]);
+        out.push([T.addr[0], 'keys', { dur: T.addr[1] - T.addr[0], kind: 'laptop' }]);   // the address types itself too (a1.js:124)
+        return out; },
       next: () => 'shop.ordered',
     }),
     // Pay: the ordered page, a check, "Order A-1001"; it ends on exactly SC.END_A1 (stageC.js:478).
@@ -503,14 +593,14 @@ window.STORY = (() => {
       next: () => 'shop.broken',
     }),
     // P2: the a2 window (parcel, crack, lean in, back to "My orders"); the caption starts at the crack.
+    // After the window, "My orders" goes on writing itself exactly as a2 would (its button last), then the
+    // cursor glides to Request refund (a2.js:57-65). The hold (and the HTML button) starts only once the drawn
+    // button's label is written (Ta2().orders[1]): a button that is not there yet cannot be pressed.
     shopBeat('shop.broken', {
-      dur: () => winDur('a2'), captions: [['broken', filmCapT('a2', 3.35)]],   // a2.js:60: at the crack
-      R: (G, q) => filmR('a2', q),
-      // the live idle goes on exactly as a2 would: "My orders" finishes writing itself (its button last), then
-      // the cursor glides to Request refund (a2.js:57-65), unless the player's pointer is on the screen
-      hold: { action: 'refund', idle: (G, hq) => { const T = Ta2(), q = tw(hq);
-        return { at: SC.HOME, live: true, screen: lit('orders', { u: sm(T.orders[0], T.orders[1], Wn('a2')[1] + hq, lin), dyn: { orders: { press: 0 } },
-          cursor: SC.cursorTrack(q, AT().wake, [{ t: [T.toRefund - Wn('a2')[1], T.toRefund - Wn('a2')[1] + .5], to: AT().refund, lift: 30 }], []) }) }; } },
+      dur: () => brokenDur(), captions: [['broken', filmCapT('a2', 3.35)]],   // a2.js:60: at the crack
+      R: (G, q) => (q <= winDur('a2') ? filmR('a2', q) : ordersAt(q - winDur('a2'), false)),
+      // the live idle: as above, unless the player's pointer is on the screen
+      hold: { action: 'refund', idle: (G, hq) => ordersAt(brokenDur() - winDur('a2') + hq, true) },
       next: () => 'shop.reason',
     }),
     // Request refund: the reason form; "Arrived broken" types itself (18 letters/s, a2.js:70).
@@ -519,7 +609,7 @@ window.STORY = (() => {
       R: (G, q) => reasonAt(q, null),
       hold: { action: 'submit', idle: (G, hq) => reasonAt(Tre().end + hq, hq) },
       sfx: () => { const T = Tre(), out = [[0, 'click', { k: 3 }], [T.s1[0], 'swipe', { k: 2 }], [T.click, 'click', { k: 0 }]];
-        for (let i = 0; i < T.n; i++) out.push([T.type[0] + i / 18, 'key', { k: i + 3 }]); return out; },
+        for (let i = 0; i < T.n; i++) out.push([T.type[0] + i / 18, 'key', { k: i + 3, space: i === 7 }]); return out; },   // 'Arrived broken': the space is letter 7
       next: () => 'shop.requested',
     }),
     // Submit: "Refund requested"; it ends on exactly SC.END_A2 (stageC.js:479), a3's first frame.
@@ -536,6 +626,16 @@ window.STORY = (() => {
       next: () => 's1.wide',
     }),
   ];
+  /** Where the cursor clicks the Name field: A.name (its right end), or, for a right-to-left fallback name (drawn
+   *  right-aligned there, NAME.install), the mirror point about the field's centre, clear of the name. */
+  function nameCursor(G) {
+    const A = AT(), F = NAME.FIELD;
+    const t = typedName(G);
+    if (G.nameMode !== 'fallback' || !F || typeof NAME.isRtl !== 'function' || !NAME.isRtl(t)) return A.name;
+    // the name's left end (NAME.install: right - w - 2 gap), less the arrow's width; never past the mirror point
+    const w = typeof NAME.measureName === 'function' ? NAME.measureName(t, 'fallback', F.cap, F.cd, t) : 0;
+    return [clamp(F.right - w - 2 * F.gap - 30, F.x - 20, F.x + F.right - A.name[0]), A.name[1]];
+  }
   /** the checkout page at q after the Buy click (a1.js:74-102 screenAt, from the click); hq = the pay
    *  hold's idle time (the cursor glides to Pay unless the pointer is on the screen), else null */
   function checkoutAt(G, q, hq) {
@@ -548,8 +648,9 @@ window.STORY = (() => {
     if (caret && q > T.addr[1] && Math.floor((q - T.addr[1]) / .4) % 2) caret = 0;
     s.dyn = { product: { press: SC.pressed(q2, 0), hover: 0, hoverA: 1 }, checkout: { name: k >= n ? 1 : k ? (k - .5) / n : 0, addr: lin2(T.addr, q), caret, press: 0 } };
     sliding(s, q, T.s1, 'checkout');
-    s.cursor = hq === null ? SC.cursorTrack(q2, A.buy, [{ t: T.toName, to: A.name, lift: 30 }], [0, T.click])
-      : SC.cursorTrack(tw(hq), A.name, [{ t: [.1, .6], to: A.pay, lift: 30 }], []);
+    const at = nameCursor(G);
+    s.cursor = hq === null ? SC.cursorTrack(q2, A.buy, [{ t: T.toName, to: at, lift: 30 }], [0, T.click])
+      : SC.cursorTrack(tw(hq), at, [{ t: [.1, .6], to: A.pay, lift: 30 }], []);
     return { at: SC.HOME, screen: s, live: hq !== null };
   }
   /** the reason page at q after the Request refund click (a2.js:105-131 screenAt, from the click) */
@@ -591,7 +692,7 @@ window.STORY = (() => {
     tray: u => RMx().celTip(SD.D.tray, u, SD.TRAY.x, SD.TRAY.y),
     mail: u => { const E_ = RMx().ENV, t = RMx().celTip(SD.D.envelope, u, 0, 0), c = Math.cos(E_.rot), s = Math.sin(E_.rot); return [E_.x + (t[0] * c - t[1] * s) * E_.s, E_.y + (t[0] * s + t[1] * c) * E_.s]; },
     // the open notebook (a9.js:109-111 left page, right page, spine), traced
-    book: u => { const N = ROOM.NB, cel = celOf('a9/nb-open'); if (cel) return RMx().celTip(cel, clamp(u, 0, 1), N.x, N.y); const P = [[-4, -2], [-92, 2], [-78, -50], [-4, -52], [4, -52], [78, -50], [92, 2], [4, -2]], k = clamp(u, 0, 1) * (P.length - 1), i = Math.min(P.length - 2, Math.floor(k)), t = k - i;
+    book: u => { if (typeof ROOM.bookOpenTip === 'function') return ROOM.bookOpenTip(u); const N = ROOM.NB, P = [[-4, -2], [-92, 2], [-78, -50], [-4, -52], [4, -52], [78, -50], [92, 2], [4, -2]], k = clamp(u, 0, 1) * (P.length - 1), i = Math.min(P.length - 2, Math.floor(k)), t = k - i;
       return [N.x + lerp(P[i][0], P[i + 1][0], t), N.y + lerp(P[i][1], P[i + 1][1], t)]; },
   };
   /** the pencils while the room is drawn: graphite for the agent, printer, tray and email; Temporal's indigo
@@ -599,19 +700,19 @@ window.STORY = (() => {
   function buildPencils(q) {
     const out = [], P = ['agent', 'printer', 'tray', 'mail'];
     let g = null;
-    if (q < T1.agent[0]) { const u = sm(0, T1.agent[0], q, easeOut); g = pencil([lerp(HOME.graphite[0], partTip.agent(0)[0], u), lerp(HOME.graphite[1], partTip.agent(0)[1], u)], 'graphite', 1 - u); }
+    if (q < T1.agent[0]) { const u = sm(0, T1.agent[0], q, easeOut); g = glide([lerp(HOME.graphite[0], partTip.agent(0)[0], u), lerp(HOME.graphite[1], partTip.agent(0)[1], u)], 'graphite', 1 - u); }
     else for (let i = 0; i < P.length; i++) {
       const a = T1[P[i]];
       if (q < a[1]) { g = pencil(partTip[P[i]](sm(a[0], a[1], q, lin)), 'graphite', 0); break; }
       const nx = P[i + 1];
-      if (nx && q < T1[nx][0]) { const u = sm(a[1], T1[nx][0], q, easeInOutSine), A = partTip[P[i]](1), B = partTip[nx](0); g = pencil([lerp(A[0], B[0], u), lerp(A[1], B[1], u)], 'graphite', Math.sin(Math.PI * u)); break; }
-      if (!nx && q < a[1] + .6) { const u = sm(a[1], a[1] + .6, q, easeIn), A = partTip[P[i]](1); g = pencil([lerp(A[0], HOME.graphite[0], u), lerp(A[1], HOME.graphite[1], u)], 'graphite', u * 2); }
+      if (nx && q < T1[nx][0]) { const u = sm(a[1], T1[nx][0], q, easeInOutSine), A = partTip[P[i]](1), B = partTip[nx](0); g = glide([lerp(A[0], B[0], u), lerp(A[1], B[1], u)], 'graphite', Math.sin(Math.PI * u)); break; }
+      if (!nx && q < a[1] + .6) { const u = sm(a[1], a[1] + .6, q, easeIn), A = partTip[P[i]](1); g = glide([lerp(A[0], HOME.graphite[0], u), lerp(A[1], HOME.graphite[1], u)], 'graphite', u * 2); }
     }
     if (g) out.push(g);
     const B = T1.book, r0 = rowTip(0, 't', 0);
-    if (q >= B[0] - .45 && q < B[0]) { const u = sm(B[0] - .45, B[0], q, easeOut), A = partTip.book(0); out.push(pencil([lerp(HOME.indigo[0], A[0], u), lerp(HOME.indigo[1], A[1], u)], 'indigo', 1 - u)); }
+    if (q >= B[0] - .45 && q < B[0]) { const u = sm(B[0] - .45, B[0], q, easeOut), A = partTip.book(0); out.push(glide([lerp(HOME.indigo[0], A[0], u), lerp(HOME.indigo[1], A[1], u)], 'indigo', 1 - u)); }
     else if (q >= B[0] && q < B[1]) out.push(pencil(partTip.book(sm(B[0], B[1], q, lin)), 'indigo', 0));
-    else if (q >= B[1]) { const u = sm(B[1], B[1] + .4, q, easeInOutSine), A = partTip.book(1); out.push(pencil([lerp(A[0], r0[0] - 8, u), lerp(A[1], r0[1] - 26, u)], 'indigo', .2 + .5 * u)); }   // it waits over the page for the request
+    else if (q >= B[1]) { const u = sm(B[1], B[1] + .4, q, easeInOutSine), A = partTip.book(1); out.push(glide([lerp(A[0], r0[0] - 8, u), lerp(A[1], r0[1] - 26, u)], 'indigo', .2 + .5 * u)); }   // it waits over the page for the request
     return out;
   }
   /** the request dropping into the tray (a3.js:429-434 slipState, re-timed) */
@@ -623,7 +724,7 @@ window.STORY = (() => {
   }
   const s1Beats = [
     { id: 's1.wide', stage: 1, scene: 'wide', captions: [], events: [], noPlug: 'plugWide',
-      dur: () => winDur('a3'), R: (G, q) => filmR('a3', q), next: () => 's1.build' },
+      dur: () => winDur('a3'), R: (G, q) => filmR('a3', q, G), next: () => 's1.build' },
     // the pencil draws the room (the plug is not live until the room exists: GAME DECISION, see the report)
     // the pencil draws the room, the request drops into the tray, Temporal writes it down (row 0, text and
     // check together): "Workflow started"
@@ -640,14 +741,17 @@ window.STORY = (() => {
         R.face = look(q2, [[0, 'open'], [g12(T1.drop[0] + f(1)), 'sideR'], [g12(T1.commit - f(3)), 'side']], [g12(T1.agent[1] + .55), g12(T1.drop[1] + .5)]);   // a3.js:420-422; he looks at the notebook as it writes
         R.slip = dropSlip(q); R.traySlip = q >= T1.drop[1] || G.world.traySlip ? 1 : 0;
         // Temporal's pencil: it draws the notebook, waits over the page, then writes the request (inkPencil)
-        const ink = inkPencil(G, beats['s1.build'], qc), bp = buildPencils(q);
+        // (no approach glide from HOME: the build's own pencil already hovers over the page, 27 px from row 0)
+        const ink = inkPencil(G, qc >= T1.commit - 1e-9 ? beats['s1.build'] : null, qc), bp = buildPencils(q);
         R.pencils = ink ? [...bp.filter(p => p.color !== 'indigo'), ink] : q >= T1.commit + 1 ? bp.filter(p => p.color !== 'indigo') : bp;
         return R;
       },
       next: () => 's1.req' }),
     // Temporal writes the request down (row 0, text and check together): "Workflow started".
-    // he waits while the caption finishes (s1b: ~5.1 s from the commit)
-    roomBeat('s1.req', { stage: 1, dur: 4.25,
+    // he waits while the caption finishes: s1b starts once s1 has faded (s1.build q ~6.5, not at the commit) and
+    // lives ~4.96 s with its fade; 5.0 s here lets it end, plus the .2 s gap, before s2.read, so each later
+    // caption (s2-s5, each a little shorter than its beat) starts at about q 0, ahead of the action it names
+    roomBeat('s1.req', { stage: 1, dur: 5.0,
       cls: () => 'any', recover: () => 's2.read', outcome: () => 'out1',
       R: (G, q) => { const R = base(G, beats['s1.req'], q), q2 = tw(q); R.face = look(q2, [[0, 'side'], [.5, 'open']], [1.25, 3.5]); return R; },
       next: () => 's2.read' }),
@@ -698,7 +802,7 @@ window.STORY = (() => {
         const R = base(G, beats['s3.pause'], q), q2 = tw(q);
         R.pose = track(q2, [[0, 'rest'], [A3.dip, DIP(), 0], [A3.point, 'point', .25, easeOut], [A3.down, 'rest', .25]]);
         R.face = look(q2, [[0, 'open'], [A3.point, 'sideR'], [A3.face, 'pause']], [f(1)]);
-        R.wait = slipOut('look_up_order', q2, A3.rise, A3.fly, { pause: sm(A3.pause[0], A3.pause[1], q2, lin), wob: wobAt(q2, [2.5, 3.75]) });
+        R.wait = slipOut('look_up_order', q2, A3.rise, A3.fly, { pause: sm(A3.pause[0], A3.pause[1], q2, lin), wob: calmWob(G, wobAt(q2, [2.5, 3.75])) }, R.pose);
         return R;
       },
       next: () => 's4.run' }),
@@ -715,7 +819,7 @@ window.STORY = (() => {
     // the drawer: two drawings each way (a3.js:441), the folder rises (easeOutBack 1.4) and sinks (a3.js:442)
     R.drawer = q2 < T4.drawer ? 0 : q2 < T4.drawer + f(1) ? .5 : q2 < T4.shut ? 1 : q2 < T4.shut + f(1) ? .5 : 0;
     R.folder = q2 < T4.folder[0] ? 0 : q2 < T4.sink[0] ? easeOutBack(clamp((q2 - T4.folder[0]) / (T4.folder[1] - T4.folder[0]), 0, 1), 1.4) : 1 - sm(T4.sink[0], T4.sink[1], q2, easeIn);
-    R.wait = slipAt(fl.which, WAITP(), { sy: fl.sy, wob: wobAt(q2, [2.75]) });
+    R.wait = slipAt(fl.which, WAITP(), { sy: fl.sy, wob: calmWob(G, wobAt(q2, [2.75])) });
     return R;
   }
   const lookupBeat = (id, retry, o = {}) => roomBeat(id, { stage: 4, dur: 3.25,
@@ -743,20 +847,43 @@ window.STORY = (() => {
    *  answer had just gone back in (at BACK.sink[1]) */
   const INTRO = { rise: [f(3), f(7)], fly: [f(7), f(12)], sink: [f(12), f(15)], len: f(15) };
   const shiftQ = (q, intro) => (intro ? q - INTRO.len + BACK.sink[1] : q);
+  /** A saved answer that was still OUT at the crash (at WAIT, on its hop back or sinking into his badge; STORY.onPlug
+   *  keeps its R.wait in G.answerOut): the resumed step starts from where it was, so it never pops away when
+   *  the props snap to the recovery beat at the power-on (room.js ROOM.crash). It hops back to his badge and
+   *  sinks in over the intro instead of rising out of the notebook. The dark glow is ROOM.crash's (it has
+   *  faded by the wake), so none here. null once it is in. */
+  function slipFromOut(A, q, pose) {
+    const bd = badge(pose), p0 = [A.x, A.y], o = { sy: A.sy ?? 1, approved: A.approved ?? 0, rejected: A.rejected ?? 0, glow: 0, wob: null };
+    if (A.clip) {   // it was sinking in: it finishes the sink
+      if (q < INTRO.rise[0]) return slipAt(A.which, p0, { ...o, s: A.s, rot: A.rot, clip: 'badge', pause: 0 });
+      if (q >= INTRO.fly[0]) return null;
+      const u = sm(INTRO.rise[0], INTRO.fly[0], q, easeIn), b = slotIn(bd);
+      return slipAt(A.which, [lerp(p0[0], b[0], u), lerp(p0[1], b[1], u)], { ...o, s: A.s, rot: lerp(A.rot, upOf(bd), u), clip: 'badge', pause: 0 });
+    }
+    if (q < INTRO.rise[0]) return slipAt(A.which, p0, { ...o, s: A.s, rot: A.rot, pause: A.pause ?? 0 });
+    if (q < INTRO.fly[1]) {
+      const u = sm(INTRO.rise[0], INTRO.fly[1], q, lin), e = easeIO(u), b = slotOut(bd);
+      return slipAt(A.which, [lerp(p0[0], b[0], e), lerp(p0[1], b[1], e) - SL.HOP * 4 * e * (1 - e)],
+        { ...o, s: lerp(A.s, SL.LOW, e), rot: lerp(A.rot, upOf(bd), easeIn(u)), pause: (A.pause ?? 0) * (1 - sm(INTRO.rise[0], INTRO.rise[0] + f(4), q, lin)) });
+    }
+    if (q < INTRO.sink[1]) { const u = sm(INTRO.sink[0], INTRO.sink[1], q, easeIn), a = slotOut(bd), b = slotIn(bd); return slipAt(A.which, [lerp(a[0], b[0], u), lerp(a[1], b[1], u)], { ...o, s: SL.LOW, rot: upOf(bd), clip: 'badge', pause: 0 }); }
+    return null;
+  }
   function stepR(G, q, id, o) {
     const R = base(G, beats[id], q), q2 = tw(q), x = shiftQ(q2, o.intro);
     if (o.intro && q2 < INTRO.len) {
-      R.pose = 'rest'; R.face = look(q2, [[0, 'side'], [INTRO.sink[0], 'open']]);
-      R.wait = slipFromBook(o.answer, q2, INTRO.rise, INTRO.fly, INTRO.sink, o.answerO ?? {});
+      const A = G.answerOut && G.answerOut.which === o.answer ? G.answerOut : null;   // still out at the crash
+      R.pose = 'rest'; R.face = look(q2, [[0, A ? 'sideR' : 'side'], [INTRO.sink[0], 'open']]);
+      R.wait = A ? slipFromOut(A, q2, R.pose) : slipFromBook(o.answer, q2, INTRO.rise, INTRO.fly, INTRO.sink, o.answerO ?? {}, R.pose);
       return R;
     }
     Object.assign(R, o.perf(x));
-    R.wait = x < BACK.sink[1] ? slipBack(o.answer, x, BACK.back, BACK.sink, { pause: 1 - sm(BACK.sink[0], BACK.sink[1], x, lin), ...(o.answerO ?? {}) })
-      : o.ask ? slipOut(o.ask.which, x, o.ask.t.rise, o.ask.t.fly, { pause: sm(o.ask.t.pause[0], o.ask.t.pause[1], x, lin), wob: wobAt(x, o.ask.wob ?? []) }) : null;
+    R.wait = x < BACK.sink[1] ? slipBack(o.answer, x, BACK.back, BACK.sink, { pause: 1 - sm(BACK.back[0], BACK.back[0] + f(4), x, lin), ...(o.answerO ?? {}) }, R.pose)
+      : o.ask ? slipOut(o.ask.which, x, o.ask.t.rise, o.ask.t.fly, { pause: sm(o.ask.t.pause[0], o.ask.t.pause[1], x, lin), wob: calmWob(G, wobAt(x, o.ask.wob ?? [])) }, R.pose) : null;
     return R;
   }
   const off = intro => (intro ? INTRO.len - BACK.sink[1] : 0);
-  const step2Beat = (id, intro, o = {}) => roomBeat(id, { stage: 5, dur: T5.end + off(intro),
+  const step2Beat = (id, intro, o = {}) => roomBeat(id, { answer: 'answer', intro, stage: 5, dur: T5.end + off(intro),
     commit: { t: T5.commit + off(intro), row: 2, part: 't' },
     events: [[0, G => run(G, 'step2', intro)], [T5.commit + off(intro), G => log(G, 'step2Done')]],
     cls: G => (G.book[2].t ? 'after' : 'before'), recover: G => (G.book[2].t ? 's6.wait' : 'r5.resume'), outcome: G => (G.book[2].t ? 'outSkip' : 'out5'),
@@ -770,6 +897,23 @@ window.STORY = (() => {
   // STAGE 6: you approve. The a8 clock, the waiting slip's fidget, the pause face; the stamp (a8)
   // =============================================================================================
   const T6 = { clock: [f(3), f(10)], wob: 1.25, dur: 4.25 };
+  /** A caption of approval beat `id` is still queued (not shown yet), and no decision was queued in the dark. */
+  /** A crash (of this story, not one before a rail jump) has interrupted the approval: Approve and Reject were
+   *  offered in the dark (queueable), and its outcome ("The approval still waits.") is now the call to act. */
+  const crashed6 = G => G.crashes.some(c => !c.past && c.stage === 6);
+  const callQueued = (G, id) => G.beat.id === id && !G.approval.queued && !!G.cap && G.cap.queue.some(x => x.beat === id)
+    && !crashed6(G);   // the held captions come back after the outcome (runtime recover): they must not close the hold again
+  /** s6.wait's length: T6.dur, but the hold (Approve / Reject) does not start while its captions are still
+   *  queued: the call to act, "You are the manager now.", is drawn first (the buttons enable as it starts).
+   *  Once it starts, dur is T6.dur again, so the hold's t0 lies in the past and hold.idle(G, q - T6.dur) =
+   *  waitR(G, q): the drawing goes on without a jump. */
+  const waitDur = G => {
+    // after a crash, the hold is open from the power-on (the buttons stay as they were in the dark, not
+    // "Watching…" for the rest of T6.dur): dur = q, so the hold's t0 is now (hold.idle draws T6.dur on; not
+    // before the clock's graphite pencil has left, T6.clock[1] + .5, so no pencil vanishes at the switch)
+    if (G.beat && G.beat.id === 's6.wait' && G.frozenQ === null && crashed6(G)) return Math.min(T6.dur, Math.max(G.q, T6.clock[1] + .5));
+    return callQueued(G, 's6.wait') ? Math.max(T6.dur, G.q + f(1)) : T6.dur;
+  };
   /** the minute hand follows the game clock (GAME_SPEC §4 st. 6; a8.js:94 minuteAngle), on twos: one turn
    *  per 6 s. On G.clock, so it runs on across the approval and never jumps. */
   const minute = G => TAU_ * tw(G.clock) / 6;
@@ -778,7 +922,7 @@ window.STORY = (() => {
     const R = base(G, beats['s6.wait'], q), q2 = tw(q);
     R.face = 'pause';
     R.clock = { u: sm(T6.clock[0], T6.clock[1], q2, lin), angle: minute(G), alpha: 1 };
-    R.wait = slipAt('issue_refund', WAITP(), { wob: wobEvery(q2, T6.wob) });
+    R.wait = slipAt('issue_refund', WAITP(), { wob: calmWob(G, wobEvery(q2, T6.wob)) });
     // decided while the power was off: the stamp hovers high (drawing 0) until the notes are done (st. 6)
     if (G.approval.queued) R.stamp = { k: 0, word: wordOf(G.approval.queued), hover: true };
     // a8's pencil draws the clock (face, then the hands), a graphite pencil around the dial
@@ -787,34 +931,58 @@ window.STORY = (() => {
       const t = u < .72 ? RMx().celTip(SB.D.clock, fu, 0, 0) : [0, -18 * clamp((u - .72) / .28, 0, 1)], at = [C.x + t[0] * C.s, C.y + t[1] * C.s];
       const p = q < T6.clock[0] ? [lerp(HOME.graphite[0], at[0], sm(T6.clock[0] - .3, T6.clock[0], q, easeOut)), lerp(HOME.graphite[1], at[1], sm(T6.clock[0] - .3, T6.clock[0], q, easeOut))]
         : q < T6.clock[1] ? at : [lerp(at[0], HOME.graphite[0], sm(T6.clock[1], T6.clock[1] + .5, q, easeIn)), lerp(at[1], HOME.graphite[1], sm(T6.clock[1], T6.clock[1] + .5, q, easeIn))];
-      R.pencils = [...R.pencils, pencil(p, 'graphite', q < T6.clock[0] ? 1 - sm(T6.clock[0] - .3, T6.clock[0], q, lin) : q < T6.clock[1] ? 0 : sm(T6.clock[1], T6.clock[1] + .5, q, lin) * 2)];
+      R.pencils = [...R.pencils, (q < T6.clock[0] || q >= T6.clock[1] ? glide : pencil)(p, 'graphite', q < T6.clock[0] ? 1 - sm(T6.clock[0] - .3, T6.clock[0], q, lin) : q < T6.clock[1] ? 0 : sm(T6.clock[1], T6.clock[1] + .5, q, lin) * 2)];
     }
     return R;
   }
-  // a8 stampPose by drawing index (a8.js:162-173): K_IMPACT 2, K_LIFT 6, K_END 10 drawings from the fall
-  const T6s = { impact: f(2), lift: f(6), end: f(10), clockOut: [f(8), f(13)], dur: 1.25 };
+  // a8 stampPose by drawing index (a8.js:162-173), ROOM.STAMP_K = {impact 2, lift 6, end 10} drawings from
+  // the fall: R.stamp.k is that index (on twos); the impression is wait.approved / wait.rejected from impact
+  const SK = ROOM.STAMP_K ?? { impact: 2, lift: 6, end: 10 };
+  const T6s = { impact: f(SK.impact), lift: f(SK.lift), end: f(SK.end), clockOut: [f(8), f(13)], dur: 1.25 };
   function stampR(G, q, id, word) {
     const R = base(G, beats[id], q), q2 = tw(q), k = Math.round(q2 * 12);
     R.face = 'pause';
-    R.stamp = k < 10 ? { k, word } : null;
+    // reduced motion: no speed lines: before the impact it is held high (drawing 0 as it hovered, no streaks),
+    // and the lift's trail drawings (lift + 2 on) are not drawn
+    R.stamp = G.settings && G.settings.reduced ? (k < SK.impact ? { k: 0, word, hover: true } : k < SK.lift + 2 ? { k, word } : null)
+      : k < SK.end ? { k, word } : null;
     R.clock = q2 < T6s.clockOut[1] ? { u: 1, angle: minute(G), alpha: 1 - sm(T6s.clockOut[0], T6s.clockOut[1], q2, lin) } : null;
-    R.wait = slipAt('issue_refund', WAITP(), { [word]: q2 >= T6s.impact ? 1 : 0, pause: 1 - sm(T6s.impact, T6s.impact + f(6), q2, lin) });
+    // the pause sign stays (his face stays 'pause': Claude is paused until refund_id / the rejection goes
+    // back in, s8.step3 / rj.step3 fade it there), so it is continuous across s6.stamp -> s7.refund
+    // the rest after the stamp (stampDur: while a caption finishes): it wobbles every 1.25 s as it waited
+    // (a8.js:144-148), only a wobble that ends inside the beat (no jump into the next beat's still slip)
+    const d = durOf(beats[id], G), w0 = T6s.dur + .25, ws = q2 >= w0 ? w0 + Math.floor((q2 - w0) / T6.wob) * T6.wob : Infinity;
+    R.wait = slipAt('issue_refund', WAITP(), { [word]: q2 >= T6s.impact ? 1 : 0, pause: 1, wob: ws + f(4) <= d + 1e-9 ? calmWob(G, wobEvery(q2, w0)) : null });
     return R;
   }
-  const stampBeat = (id, word) => roomBeat(id, { stage: 6, dur: T6s.dur,
+  /** The stamp beat rests (the stamped slip on WAIT, its pause sign) until the caption on screen at the decision
+   *  ("You are the manager now.", which keeps its minimum hold, GAME_SPEC §1.8) has faded, plus the .2 s gap, so
+   *  the next caption (s7 / reject) starts at about q 0 of its beat, ahead of the print / the slip's return.
+   *  Stable across the fade: while a caption shows, its end (cut or out) + .3 fade + .2; once it has ended in
+   *  this beat, C.last + .2 (the same time). Only for the beat being played (runtime's warmNext asks too). */
+  const stampDur = id => G => {
+    const B = G.beat, C = G.cap;
+    if (!B || B.id !== id || !C) return T6s.dur;
+    const end = C.now ? (C.now.cut ?? C.now.out) + .5 : C.last >= B.t0 ? C.last + .2 : -Infinity;
+    return Math.max(T6s.dur, end - B.t0);
+  };
+  const stampBeat = (id, word) => roomBeat(id, { stage: 6, dur: stampDur(id),
     commit: word === 'approved' ? [{ t: T6s.impact, row: 3, part: 't' }, { t: T6s.impact, row: 3, part: 'c' }]
       : [{ t: T6s.impact, row: 2, part: 'strike' }, { t: T6s.impact, row: 3, part: 't' }, { t: T6s.impact, row: 3, part: 'c' }],
     events: [[T6s.impact, G => { G.approval.waiting = false; log(G, word); }]],
     cls: G => (G.book[3].t ? 'after' : 'wait'),
     recover: G => (G.book[3].t ? (G.branch === 'reject' ? 'rj.step3' : 's7.refund') : id),   // before the impact: it resumes and presses
-    outcome: G => (G.book[3].t ? 'outSkip' : 'out6'),
+    // an approval (a validated Update) is neither run nor skipped: after the impact it is written (and the
+    // refund runs next / no money moves); before it, the player's decision was not written yet and now it is
+    outcome: G => (G.book[3].t ? (word === 'approved' ? 'out6approved' : 'out6rejected') : 'out6decided'),
     sfx: [[T6s.impact, 'stamp']],
     R: (G, q) => stampR(G, q, id, word),
     next: () => (word === 'approved' ? 's7.refund' : 'rj.step3') });
   const s6Beats = [
-    roomBeat('s6.wait', { stage: 6, dur: T6.dur, captions: ['s6', 's6b'],
+    roomBeat('s6.wait', { stage: 6, dur: waitDur, captions: ['s6', 's6b'],
       events: [[0, G => { G.approval.waiting = true; }]],
-      cls: () => 'wait', recover: G => G.beat.id, outcome: () => 'out6',
+      // a decision queued in the dark is stamped right after the notes: 'out6decided', not "still waits"
+      cls: () => 'wait', recover: G => G.beat.id, outcome: G => (G.approval.queued ? 'out6decided' : 'out6'),
       sfx: [[f(1), 'lock']],
       R: (G, q) => waitR(G, q),
       hold: { action: 'approve', idle: (G, hq) => waitR(G, T6.dur + hq) },
@@ -834,7 +1002,7 @@ window.STORY = (() => {
     R.led = q2 >= T7.print[0] && q2 < T7.print[1] && Math.floor(q2 * 6 + 1e-6) % 2 === 0 ? 1 : 0;   // a3.js:446, a9.js:269
     if (mode !== 'money' && !G.world.receiptOut) R.receipt = { e: q < T7.print[0] ? e0 : lerp(e0, 150, sm(T7.print[0], T7.print[1], q, lin)), check: 0 };
     const dy = mode === 'first' ? 18 * sm(T7.dip[0], T7.dip[1], q2, easeIO) : 18;   // the approved slip goes to the printer side
-    R.wait = slipAt(fl.which, [ROOM.WAIT.x, ROOM.WAIT.y + dy], { sy: fl.sy, approved: fl.which === 'issue_refund' ? 1 : 0, wob: wobAt(q2, [2.75]) });
+    R.wait = slipAt(fl.which, [ROOM.WAIT.x, ROOM.WAIT.y + dy], { sy: fl.sy, approved: fl.which === 'issue_refund' ? 1 : 0, wob: calmWob(G, wobAt(q2, [2.75])) });
     return R;
   }
   const refundBeat = (id, mode, o = {}) => {
@@ -864,7 +1032,7 @@ window.STORY = (() => {
     const face = look(x, [[0, 'pause'], [BACK.sink[1], 'sideR'], [t.nod, 'happy'], [t.rest, 'open'], [t.ask.face, 'pause']], [g12(t.rest + .35)]);
     return { pose, face };
   }
-  const step3Beat = (id, intro, o = {}) => roomBeat(id, { stage: 8, dur: T8a.end + off(intro),
+  const step3Beat = (id, intro, o = {}) => roomBeat(id, { answer: 'refund_id', intro, stage: 8, dur: T8a.end + off(intro),
     commit: { t: T8a.commit + off(intro), row: 4, part: 't' },
     events: [[0, G => run(G, 'step3', intro)], [T8a.commit + off(intro), G => log(G, 'step3Done')]],
     cls: G => (G.book[4].t ? 'after' : 'before'), recover: G => (G.book[4].t ? 's8.email' : 'r8.step3'), outcome: G => (G.book[4].t ? 'outSkip' : 'out8step3'),
@@ -878,7 +1046,7 @@ window.STORY = (() => {
   function emailR(G, q, id) {
     const R = base(G, beats[id], q), q2 = tw(q);
     R.face = 'pause';
-    R.wait = slipAt('email_customer', WAITP(), { wob: wobAt(q2, [2.25]) });
+    R.wait = slipAt('email_customer', WAITP(), { wob: calmWob(G, wobAt(q2, [2.25])) });
     if (!G.world.envelopeSent) R.envelope = q < T8e.hop[0] ? { state: 'desk', u: 1, fly: 0 } : q < T8e.fly[1] ? { state: 'fly', u: 1, fly: sm(T8e.hop[0], T8e.fly[1], q, lin) } : { state: 'gone', u: 1, fly: 1 };
     return R;
   }
@@ -896,7 +1064,7 @@ window.STORY = (() => {
     const face = look(x, [[0, 'pause'], [BACK.sink[1], 'sideR'], [t.down, 'down'], [t.rest, 'open']], [g12(t.rest + .5)]);
     return { pose, face };
   }
-  const step4Beat = (id, intro, o = {}) => roomBeat(id, { stage: 8, dur: T8d.end + off(intro),
+  const step4Beat = (id, intro, o = {}) => roomBeat(id, { answer: 'email_customer', intro, stage: 8, dur: T8d.end + off(intro),
     commit: [{ t: T8d.commit + off(intro), row: 5, part: 't' }, { t: T8d.commit + off(intro), row: 5, part: 'c' }],
     events: [[0, G => run(G, 'step4', intro)], [T8d.commit + off(intro), G => { log(G, 'step4Done'); log(G, 'completed'); }]],
     cls: G => (G.book[5].t ? 'after' : 'before'), recover: G => (G.book[5].t ? 's9.done' : 'r8.step4'), outcome: G => (G.book[5].t ? 'out9' : 'out8step4'),
@@ -911,7 +1079,7 @@ window.STORY = (() => {
   // =============================================================================================
   const T9 = { green: [f(6), f(11)], happy: f(11), cheer: [f(12), f(16)], cheerOut: [f(29), f(33)], end: 4.25 };
   const GREEN = () => ({ x: SD.PRINTER.x + MINI_RECEIPT.w / 2 + 14, y: SD.PRINTER.y - SD.PRINTER.slot - 30 });   // a9.js:218
-  const greenTip = u => { const G_ = GREEN(), cel = celOf('a9/green'); if (cel) return RMx().celTip(cel, clamp(u, 0, 1), G_.x, G_.y); const P = [[-14, 0], [-4, 10], [18, -18]].map(([x, y]) => [x * 1.8, y * 1.8]), k = clamp(u, 0, 1) * 2, i = Math.min(1, Math.floor(k)), t = k - i;
+  const greenTip = u => { if (typeof ROOM.greenTip === 'function') return ROOM.greenTip(u); const G_ = GREEN(), P = [[-14, 0], [-4, 10], [18, -18]].map(([x, y]) => [x * 1.8, y * 1.8]), k = clamp(u, 0, 1) * 2, i = Math.min(1, Math.floor(k)), t = k - i;
     return [G_.x + lerp(P[i][0], P[i + 1][0], t), G_.y + lerp(P[i][1], P[i + 1][1], t)]; };
   function doneR(G, q) {
     const R = base(G, beats['s9.done'], q), q2 = tw(q), gu = sm(T9.green[0], T9.green[1], q, lin);
@@ -919,9 +1087,9 @@ window.STORY = (() => {
     R.pose = track(q2, [[0, 'rest'], [T9.cheer[0], 'cheer', T9.cheer[1] - T9.cheer[0], easeOut], [T9.cheerOut[0], 'rest', T9.cheerOut[1] - T9.cheerOut[0]]]);   // a9.js:169
     R.face = look(q2, [[0, 'sideR'], [T9.happy, 'happy']], [f(2)]);
     const A = greenTip(0), B = greenTip(1);
-    if (q >= T9.green[0] - .4 && q < T9.green[0]) { const u = sm(T9.green[0] - .4, T9.green[0], q, easeOut); R.pencils = [...R.pencils, pencil([lerp(HOME.green[0], A[0], u), lerp(HOME.green[1], A[1], u)], 'green', 1 - u)]; }
+    if (q >= T9.green[0] - .4 && q < T9.green[0]) { const u = sm(T9.green[0] - .4, T9.green[0], q, easeOut); R.pencils = [...R.pencils, glide([lerp(HOME.green[0], A[0], u), lerp(HOME.green[1], A[1], u)], 'green', 1 - u)]; }
     else if (q >= T9.green[0] && q < T9.green[1]) R.pencils = [...R.pencils, pencil(greenTip(gu), 'green', 0)];
-    else if (q >= T9.green[1] && q < T9.green[1] + .5) { const u = sm(T9.green[1], T9.green[1] + .5, q, easeIn); R.pencils = [...R.pencils, pencil([lerp(B[0], HOME.green[0], u), lerp(B[1], HOME.green[1], u)], 'green', u * 2)]; }
+    else if (q >= T9.green[1] && q < T9.green[1] + .5) { const u = sm(T9.green[1], T9.green[1] + .5, q, easeIn); R.pencils = [...R.pencils, glide([lerp(B[0], HOME.green[0], u), lerp(B[1], HOME.green[1], u)], 'green', u * 2)]; }
     return R;
   }
   /** the refund email page (a new page cloned from D.requested; shop.js draws it): it wakes and writes itself */
@@ -930,7 +1098,7 @@ window.STORY = (() => {
     const q2 = tw(q), w = sm(T9m.wake[0], T9m.wake[1], q2, easeOut), u = sm(T9m.page[0], T9m.page[1], q, lin);
     return { at: SC.HOME, name: { text: NAME.fit(G.drawnName || '', G.nameMode, NAME.BUDGET.mail), mode: G.nameMode },
       screen: lit('mail', { light: w * (1 + .4 * (1 - sm(T9m.wake[1], T9m.wake[1] + .3, q2, easeOut))), alpha: sm(0, f(2), q2, lin), u,
-        dyn: { mail: { title: u, note: u } }, cursor: { x: 424, y: 268, a: 1 } }) };   // a2.js:109 wake; the cursor rests clear of the note's last line
+        dyn: { mail: { title: u, note: u } }, cursor: { x: 414, y: 232, a: 1 } }) };   // a2.js:109 wake; the cursor rests clear of the note's last line (shop.js MAIL.rest)
   }
   const s9Beats = [
     roomBeat('s9.done', { stage: 9, dur: T9.end, captions: ['s9'],
@@ -953,7 +1121,7 @@ window.STORY = (() => {
     const face = look(x, [[0, 'pause'], [BACK.sink[1], 'sideR'], [t.down, 'down'], [t.rest, 'open']], [g12(BACK.sink[1] + .5), g12(t.rest + .6)]);
     return { pose, face };
   }
-  const rjBeat = (id, intro, o = {}) => roomBeat(id, { stage: 8, dur: Trj.end + off(intro),
+  const rjBeat = (id, intro, o = {}) => roomBeat(id, { answer: 'issue_refund', intro, stage: 8, dur: Trj.end + off(intro),
     commit: [{ t: Trj.commit + off(intro), row: 4, part: 't' }, { t: Trj.commit + off(intro), row: 4, part: 'c' }],
     events: [[0, G => run(G, 'step3', intro)], [Trj.commit + off(intro), G => { log(G, 'step3Reject'); log(G, 'completed'); }]],
     cls: G => (G.book[4].t ? 'after' : 'before'), recover: G => (G.book[4].t ? 'rj.done' : 'rj.again'), outcome: G => (G.book[4].t ? 'out9' : 'out8step3'),
@@ -984,7 +1152,7 @@ window.STORY = (() => {
   /** @param {string} id @returns {object|null} the beat, or null if unknown */
   const beat = id => beats[id] ?? null;
   /** Timing facts the tests (and the panel) can use: commit times per beat, stage 7's t_m / t_c. */
-  const TIMES = { s1: { ...T1 }, s3: { commit: C3 }, s4: { commit: T4.commit }, s5: { commit: T5.commit }, s6: { impact: T6s.impact }, s7: { tm: T7.tm, tc: T7.tc },
+  const TIMES = { s1: { ...T1 }, s3: { commit: C3, rise: [...A3.rise] }, s4: { commit: T4.commit }, s5: { commit: T5.commit }, s6: { impact: T6s.impact }, s7: { tm: T7.tm, tc: T7.tc },
     s8: { step3: T8a.commit, email: T8e.commit, emailTm: T8e.tm, step4: T8d.commit }, intro: off(true) };
 
   /** A beat's length for this G (BEAT.dur may be a function). @returns {number} seconds */
@@ -1072,21 +1240,51 @@ window.STORY = (() => {
   function outcome(G) { const b = beat(G.beat.id); return b && b.outcome ? b.outcome(G) : 'out1'; }
 
   /**
-   * Is the plug available now? Unavailable in the shop, the wide shot (and while the room is still being
-   * drawn), while the plug is being pulled or pushed, and during the notes CLOSE-UP (GAME_SPEC §4 end of
+   * Is the plug available now? Unavailable on an unknown beat, in the shop, the wide shot, while the room is still being
+   * drawn (s1.build before its notebook exists: 'plugBuild'), while the plug is being pulled or pushed, and during the notes CLOSE-UP (GAME_SPEC §4 end of
    * the crash sequence). It IS available while he wakes and while he lifts or puts down his notes: that
    * is a crash during a recovery (see THE CRASH above; runtime keeps the story frozen).
    * @param {object} G @returns {{ok: boolean, reason: string|null}} reason = CONTENT.html.disabled key
    */
   function plugState(G) {
     const b = beat(G.beat.id), ph = G.worker.phase;
+    if (!b) return { ok: false, reason: 'plugMoving' };   // an unknown beat (a stub, a bad id): no room state to crash
     if (ph === 'dark') return { ok: true, reason: null };   // the button reads "Plug it back in"
     if (ph === 'pulling' || ph === 'pushing') return { ok: false, reason: 'plugMoving' };
     if (G.scene === 'notes') return { ok: false, reason: 'plugNotes' };
     if (ph !== 'on' && ph !== 'waking' && ph !== 'notes') return { ok: false, reason: 'plugMoving' };   // 'recover' lasts one update
     if (b && b.noPlug) return { ok: false, reason: b.noPlug };
+    // the plug is not live until the room exists (the notebook drawn, T1.book[1]): a pull earlier would
+    // leave half-drawn props finishing in the dark with no pencil and no notebook to glow
+    if (b.id === 's1.build' && ph === 'on' && G.q < T1.book[1]) return { ok: false, reason: 'plugBuild' };
     if (G.scene === 'end' || G.scene === 'mail') return { ok: false, reason: 'plugDone' };
     return { ok: G.stage >= 1, reason: G.stage >= 1 ? null : 'plugShop' };
+  }
+
+  /**
+   * The plug click (runtime calls it with G.frozenQ set, BEFORE crashWhen and saved; again on a re-crash):
+   * the one write a crash causes. In stage 1 Temporal already has the request (requestDurable), so if
+   * row 0 is not written yet it is written now, with "Workflow started": "the line finishes, glowing"
+   * (GAME_SPEC §4 st. 1). Idempotent: nothing on later clicks or in other beats. It also notes G.answerOut
+   * (answerOutAt), which only the recovery's drawing reads.
+   * @param {object} G  mutated (book, ink, world.traySlip, events, answerOut) @returns {void}
+   */
+  function onPlug(G) { requestDurable(G); answerOutAt(G); }
+  /**
+   * G.answerOut (story.js SCHEMAS): the saved answer slip of a step beat (b.answer) that was still out of his
+   * badge at the click (at WAIT, hopping back, or sinking in), as its R.wait; else null. The recovery beat's
+   * intro starts from it (slipFromOut) instead of from the notebook. Kept as it is on a crash inside a recovery
+   * beat's own intro (that beat resumes where it froze, from the same slip path).
+   */
+  function answerOutAt(G) {
+    const b = beat(G.beat.id), q = G.frozenQ ?? G.q;
+    if (b && b.intro && q < INTRO.len) return;
+    let A = null;
+    if (b && b.answer) {
+      let w = null; try { const R = viewR(G); w = R && R.wait; } catch (e) { console.error('STORY.onPlug: viewR failed', e); }
+      if (w && w.which === b.answer && !w.drop && savedBy(G)[w.which]) A = { ...w };
+    }
+    G.answerOut = A;
   }
 
   /**
@@ -1094,25 +1292,34 @@ window.STORY = (() => {
    * and passes it to ROOM.crash as K.saved): wait = the waiting slip is Temporal's (it glows) rather
    * than the worker's (it drops); drawer = the lookup's result is saved (else the drawer shuts);
    * envelope = the email's result is saved (else an envelope in flight drops). Decided per slip from
-   * G.book: a slip glows when the notebook line it stands for is written. In stage 1 it also writes what
-   * Temporal already has: the request (requestDurable), so "the line finishes, glowing" (GAME_SPEC §4 st. 1).
-   * @param {object} G  at the click (G.frozenQ set) @returns {{wait: boolean, drawer: boolean, envelope: boolean}}
+   * G.book: a slip glows when the notebook line it stands for is written. Read-only (onPlug writes).
+   * @param {object} G  at the click (G.frozenQ set, after onPlug) @returns {{wait: boolean, drawer: boolean, envelope: boolean}}
    */
   function saved(G) {
-    requestDurable(G);   // stage 1: Temporal already has the request (the one write a crash causes; idempotent)
-    let w = null; try { const R = viewR(G); w = R && R.wait; } catch (e) { w = null; }
-    const B = G.book, by = { look_up_order: B[1].t, answer: B[1].c, issue_refund: B[2].t, refund_id: B[2].c, email_customer: B[4].t };
-    return { wait: !!(w && by[w.which]), drawer: !!B[1].c, envelope: !!B[4].c };
+    let w = null; try { const R = viewR(G); w = R && R.wait; } catch (e) { console.error('STORY.saved: viewR failed', e); w = null; }
+    const B = G.book;
+    return { wait: !!(w && savedBy(G)[w.which]), drawer: !!B[1].c, envelope: !!B[4].c };
   }
-  /** The rail's words for one crash record (see SCHEMAS "crashes"). @returns {'crashedBefore'|'crashedAfter'} */
+  /** Per waiting slip: is the notebook line it stands for written (it is Temporal's, it glows)? */
+  const savedBy = G => { const B = G.book; return { look_up_order: B[1].t, answer: B[1].c, issue_refund: B[2].t, refund_id: B[2].c, email_customer: B[4].t }; };
+  /** The rail's words for one crash record (see SCHEMAS "crashes"). @returns {'crashedBefore'|'crashedAfter'|null}
+   *  null while that crash is still going on (ui.js shows no words for it: R[null] ?? ''). */
   function railMark(c) {
+    // the crash still going on (the power off, the notes not read yet): no words; runtime recover() sets its
+    // outcome when the power is back (a rail jump keeps it as a past one)
+    if (!c.past && !c.outcome) return null;
     if (c.when === 'after') return 'crashedAfter';
     if (c.when === 'any') return c.stage === 2 ? 'crashedBefore' : 'crashedAfter';
     return 'crashedBefore';
   }
 
+  /** The approval's call to act comes first: while a caption of s6.wait ("Risky steps wait for a human.", then
+   *  "You are the manager now.") is still queued, Approve and Reject are not offered yet, so they enable when
+   *  "You are the manager now." starts and a quick decision never shows it after the stamp. A decision queued
+   *  in the dark is applied regardless (runtime applyQueued). */
+  const callPending = (G, b) => b.hold.action === 'approve' && callQueued(G, b.id);
   /** Is the hold of beat b reached (the beat waits for the player)? */
-  const holding = (G, b) => G.frozenQ === null && G.worker.phase === 'on' && (!!G.hold || G.q >= durOf(b, G));
+  const holding = (G, b) => G.frozenQ === null && G.worker.phase === 'on' && (!!G.hold || G.q >= durOf(b, G)) && !callPending(G, b);
   /** A hold whose decision may be made while the power is off (queued): the approval (GAME_SPEC §4 st. 6). */
   const queueable = (G, b) => b.hold.action === 'approve' && G.approval.waiting && G.approval.decision === null;
   /**
@@ -1134,7 +1341,10 @@ window.STORY = (() => {
         alt: { act: 'reject', label: 'reject', enabled: !q } };
     }
     if (a && holding(G, b)) return { act: a, label: a === 'start' ? 'next' : a, enabled: true, reason: null, note: null, alt: null };
-    return { act: null, label: 'next', enabled: false, reason: 'action', note: null, alt: null };
+    // nothing to press: the button reads "Watching…" (not a "Next" that does nothing); in the dark the reason
+    // says what the game waits for (the plug), else "watch"
+    if (G.worker.phase === 'dark') return { act: null, label: 'watch', enabled: false, reason: 'plugBack', note: null, alt: null };
+    return { act: null, label: 'watch', enabled: false, reason: 'action', note: null, alt: null };
   }
 
   /**
@@ -1158,7 +1368,8 @@ window.STORY = (() => {
 
   /**
    * The panel texts for the current moment (ui.js writes them with textContent).
-   *   now     CONTENT.html.panel.now[stage], or the hint (G.hint) until the next plug pull
+   *   now     CONTENT.html.panel.now[stage], or the hint (G.hint) until the next plug pull; panel.darkNow
+   *           while the power is off (worker.phase 'pulling' / 'dark')
    *   ifPlug  CONTENT.html.panel.ifPlug[stage][class]: class = crashWhen(G) evaluated at the current q
    *           (the answer changes inside a stage: before / after the commit, stage 7's money window),
    *           falling back to .any
@@ -1168,16 +1379,24 @@ window.STORY = (() => {
    * @returns {{now: string, ifPlug: string, proof: string, note: null|{text, retryNote, table}, notebook: string[], history: string[]}}
    */
   function panel(G) {
-    const P = H().panel, labels = rowLabels(G.branch), rj = G.branch === 'reject' && G.book[3].t && P.reject ? P.reject : null;   // after a rejection: panel.reject replaces the stage's texts
-    const ip = rj ? rj.ifPlug ?? {} : P.ifPlug[G.stage] ?? {};
+    // the Reject path (from the Reject press on: G.branch is 'reject' only once it is decided): panel.reject's
+    // now / ifPlug[class] / proof replace the stage's own; a class it has no text for ('wait': the stamp
+    // before its impact) keeps the stage's, then .any
+    const P = H().panel, labels = rowLabels(G.branch), rj = G.branch === 'reject' && P.reject ? P.reject : null;
+    const ip = (rj ? rj.ifPlug : P.ifPlug[G.stage]) ?? {}, ipS = P.ifPlug[G.stage] ?? {};
     const cls = G.worker.phase !== 'dark' && plugState(G).ok ? crashWhen(G) : null;   // also while he wakes (a re-crash)
-    const last = G.crashes.at(-1), o = last && last.outcome && last.stage === G.stage ? P.outcome[last.outcome] : null;
+    // the note stays while the recovery beat plays (last.rec: runtime's saved recovery id), even when it is in
+    // another stage (out1/out2 after a stage 3 crash, outSkip, the stamp's 'after'), and through its stage
+    const last = G.crashes.at(-1), rec = last ? last.rec ?? null : null;   // runtime recover(): c.rec = the recovery beat's id
+    const o = last && last.outcome && (G.beat.id === rec || last.stage === G.stage) ? P.outcome[last.outcome] : null;
     const v = { name: G.name, slug: G.slug }, F = t => fill(t ?? '', v);   // {name} / {slug} in panel texts (textContent only)
-    return { now: F(G.hint ? H()[G.hint] : rj ? rj.now : P.now[G.stage]), ifPlug: cls ? F(ip[cls] ?? ip.any) : '', proof: F(rj ? rj.proof : P.proof[G.stage]),
+    // while the power is off, "Now" says so (the stage's text would still describe the dead worker's step)
+    const dark = (G.worker.phase === 'pulling' || G.worker.phase === 'dark') && P.darkNow;
+    return { now: F(dark ? P.darkNow : G.hint ? H()[G.hint] : (rj && rj.now) ?? P.now[G.stage]), ifPlug: cls ? F(ip[cls] ?? (rj ? ipS[cls] : null) ?? ip.any) : '', proof: F((rj && rj.proof) ?? P.proof[G.stage]),
       note: o ? { text: F(o.text), retryNote: o.retry ? P.retryNote : '', table: o.retry ? P.retryTable : null } : null,
       notebook: G.book.map((r, k) => r.t ? labels[k] + (r.c ? ' ✓' : '') : '').filter(Boolean),
       history: G.events.map(e => e.text) };
   }
 
-  return { INK_DUR, FIRST, STAGE_FIRST, TIMES, beats, beat, durOf, sfxOf, newGame, canon, bookRows, inkPlan, notes, recoverFor, crashWhen, saved, railMark, outcome, plugState, action, onAct, panel, log, fill, rowLabels, viewR };
+  return { INK_DUR, FIRST, STAGE_FIRST, TIMES, beats, beat, durOf, sfxOf, newGame, canon, bookRows, inkPlan, notes, recoverFor, crashWhen, onPlug, saved, railMark, outcome, plugState, action, onAct, panel, log, fill, rowLabels, viewR };
 })();

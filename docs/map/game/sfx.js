@@ -91,9 +91,19 @@ window.SFX_LIVE = (() => {
   }
 
   // ---------- buffer cache: from score2.js:165-166 (the cache holds AudioBuffers, keyed by sample rate) ----------
-  const CACHE = new Map();
+  // The fixed recipes (clicks, keys, chimes, piano notes, the IR...) are a small closed set and stay for good.
+  // Recipes keyed by a duration or gate (typing, print, pencil, loop) are capped: the least recently used one is
+  // dropped past VAR_MAX (48 is well above the warm set's own; a dropped one is rebuilt on its next use).
+  const CACHE = new Map(), VAR = new Set(), VAR_MAX = 48;
+  const isVar = key => /^(type\||print|pencil\||loop\|)/.test(key);
   function toBuffer(ac, chs) { const b = ac.createBuffer(chs.length, chs[0].length, ac.sampleRate); chs.forEach((c, i) => b.getChannelData(i).set(c)); return b; }
-  function cached(ac, key, make) { const k = ac.sampleRate + '|' + key; if (!CACHE.has(k)) CACHE.set(k, toBuffer(ac, make())); return CACHE.get(k); }
+  function cached(ac, key, make) {
+    const k = ac.sampleRate + '|' + key;
+    if (CACHE.has(k)) { if (VAR.delete(k)) VAR.add(k); return CACHE.get(k); }   // a hit moves a variable key to the end
+    CACHE.set(k, toBuffer(ac, make()));
+    if (isVar(key)) { VAR.add(k); if (VAR.size > VAR_MAX) { const old = VAR.values().next().value; VAR.delete(old); CACHE.delete(old); } }
+    return CACHE.get(k);
+  }
   const has = (ac, key) => CACHE.has(ac.sampleRate + '|' + key);
 
   // ---------- instruments: from score2.js:170-188 (pianoData), :204-212 (bellData), :214-222 (keyStroke) ----------
@@ -420,8 +430,10 @@ window.SFX_LIVE = (() => {
   }
 
   // ============================================================ the live engine (new)
-  let ac = null, master = null, world = null, sparkBus = null, conv = null, humEnv = null, on = false;
+  let ac = null, master = null, world = null, sparkBus = null, conv = null, revRet = null, humEnv = null, on = false;
   let humWant = false, scr = { want: false, gate: 1, node: null, g: null }, silentUntil = -1;
+  let tracer = null;   // tests only (__trace): told about every buffer started, loop start/stop and hum ramp
+  const trace = (what, key, at) => { if (tracer) try { tracer(what, key, at); } catch (e) { /* a test hook never breaks sound */ } };
   const count = {};   // variant rotation per type when opts.k is not given
   const nth = t => (count[t] = (count[t] ?? -1) + 1);
   const POWER_PAT = { flash: [[0, 1 / 12]], lit: 3 / 12 };   // score2.js:91-94 (a5/a9 POWER), GAME_SPEC §8
@@ -455,10 +467,26 @@ window.SFX_LIVE = (() => {
     key: (k, space) => space ? ['keysp' + (k % KEY_SPACE), sr => keyVar(sr, 50 + k % KEY_SPACE, true), .04] : ['key' + (k % KEY_VARS), sr => keyVar(sr, k % KEY_VARS, false), .04],
     keys: (dur, kind, seed) => { const d = clamp(dur ?? .8, .1, 8); return [`type|${kind}|${d.toFixed(3)}|${seed}`, sr => SFX.keys(sr, d, seed, kind), .04]; },
     print: dur => { const d = clamp(dur ?? .7, .2, 4); return ['print' + d.toFixed(3), sr => SFX.print(sr, d), .06]; },
-    pencil: (dur, gate, k) => { const d = clamp(dur ?? .9, .1, 6); return [`pencil|${d.toFixed(2)}|${gate}|${k}`, sr => scratchBuf(sr, d, gate, k + 1, .05, .2), .05]; },
+    pencil: (dur, gate, k) => { const d = Math.round(clamp(dur ?? .9, .1, 6) * 100) / 100; return [`pencil|${d.toFixed(2)}|${gate}|${k}`, sr => scratchBuf(sr, d, gate, k + 1, 0, .2), .05]; },
     piano: (m, bright) => ['p' + m + '|' + bright, sr => [pianoData(sr, m, bright)], 0],
     loop: gate => ['loop|' + gate, sr => scratchBuf(sr, LOOP, gate, Math.round(gate * 100)), 0],
   };
+  // the film windows' pencil cues (score2.js:964-965): a cue inside a stage pencil interval (or up to .3 s before
+  // it) is not played itself; the stage's interval is. pencilSpan returns that interval, merged with the ones that
+  // touch it (the film takes the max gate where scratch intervals overlap), as {dur, gate, delay from the cue}.
+  const ACT_K = { a1: 0, a2: 1, a3: 2 };   // one scratch seed per act window
+  const actOf = key => (window.SCENES || []).find(x => x.key === key) || null;
+  function pencilSpan(act, t) {
+    let ivs = [];
+    try { ivs = act && act.stage && typeof act.stage.scratch === 'function' ? act.stage.scratch(0) : []; } catch (e) { ivs = []; }
+    ivs = ivs.filter(v => v && v[1] > v[0]);
+    const hit = ivs.find(([a, b]) => t >= a - .3 && t <= b);
+    if (!hit) return { dur: .9, gate: 1, delay: 0 };
+    let [a, b, g] = [hit[0], hit[1], hit[2] ?? 1], grew = true;
+    while (grew) { grew = false; for (const [a2, b2, g2 = 1] of ivs) if (a2 <= b + .02 && b2 >= a - .02 && (a2 < a || b2 > b)) { a = Math.min(a, a2); b = Math.max(b, b2); g = Math.max(g, g2); grew = true; } }
+    const from = Math.max(a, t);
+    return { dur: b - from, gate: g, delay: from - t };
+  }
   function keyVar(sr, s, space) { const r = rng(4100 + s), a = r(), p = r(); return stereo(sr, keyStroke(sr, s, 'laptop', space), (p - .5) * .16, PEAK.key + 20 * Math.log10(.55 + .45 * a)); }
   const IR = ['ir', sr => reverbIR(sr)];
   const buf = ([key, make]) => cached(ac, key, () => make(ac.sampleRate));
@@ -473,6 +501,7 @@ window.SFX_LIVE = (() => {
     ...[0, 1].map(k => REC.slip(k)), ...[0, 1, 2].map(k => REC.paper(k)), REC.drawer(true), REC.drawer(false), REC.nod(),
     REC.chime(0), REC.chime(1), REC.stamp(), REC.lock(), REC.ding(), REC.question(), ...[0, 1, 2, 3].map(k => REC.readTick(k)),
     REC.loop(1), REC.loop(.45), REC.pencil(.9, 1, 0),
+    ...['a1', 'a2', 'a3'].flatMap(key => { const a = actOf(key); return (a && a.cues ? a.cues : []).filter(q => q.type === 'pencil').map(q => { const p = pencilSpan(a, q.t); return REC.pencil(p.dur, p.gate, ACT_K[key]); }); }),
   ];
   let warmQ = [], warming = false;
   const idle = fn => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 400 }) : setTimeout(() => fn({ timeRemaining: () => 8, didTimeout: true }), 40));
@@ -497,7 +526,7 @@ window.SFX_LIVE = (() => {
     master = ac.createGain(); world = ac.createGain(); sparkBus = ac.createGain();
     world.connect(master); sparkBus.connect(master); master.connect(comp); comp.connect(trim); trim.connect(ac.destination);
     conv = ac.createConvolver(); conv.normalize = false;
-    const ret = ac.createGain(); ret.gain.value = MIX.rev; conv.connect(ret); ret.connect(world);
+    revRet = ac.createGain(); revRet.gain.value = MIX.rev; conv.connect(revRet); revRet.connect(world);
     // the room hum: live oscillators, from score2.js:949-952 (env starts at 0; hum() ramps it)
     humEnv = ac.createGain(); humEnv.gain.value = 0;
     const wob = ac.createGain(), lfo = ac.createOscillator(), lfoG = ac.createGain();
@@ -519,7 +548,7 @@ window.SFX_LIVE = (() => {
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* not supported */ }
     if (!ac) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; build(new AC()); }
     on = true;
-    const t = ac.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(1, t);
+    const t = ac.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(0, t); master.gain.linearRampToValueAtTime(1, t + .05);
     humTo(humWant, .05);
     try { if (ac.state !== 'running') await ac.resume(); } catch (e) { /* resumed on the next gesture */ }
   }
@@ -527,9 +556,18 @@ window.SFX_LIVE = (() => {
   async function disable() {
     on = false; if (!ac) return;
     const t = ac.currentTime; master.gain.cancelScheduledValues(t); master.gain.setValueAtTime(master.gain.value, t); master.gain.linearRampToValueAtTime(0, t + .05);
-    stopLoop(.02);
+    stopLoop(.02); cutShots(t, t + .05);   // nothing left over resumes when Sound comes back
+    // a crash silence still pending ends now, under the master fade, instead of running on after Sound on
+    if (silentUntil > t) { const g = world.gain; g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(1, t + .05); silentUntil = -1; }
     await new Promise(r => setTimeout(r, 70));
+    if (!on) freshReverb();   // under the faded master: the reverb's tail is not frozen with the context
     if (!on && ac.state === 'running') { try { await ac.suspend(); } catch (e) { /* already closed */ } }
+  }
+  // a new convolver with the same IR (its state starts empty); the old one's tail goes with it
+  function freshReverb() {
+    const old = conv; conv = ac.createConvolver(); conv.normalize = false;
+    if (old.buffer) conv.buffer = old.buffer;   // an IR not built yet is set by the warm-up ('@conv') as before
+    conv.connect(revRet); old.disconnect();
   }
   /** Tab hidden/shown (runtime.js on visibilitychange): suspend / resume if sound is on. */
   function visibility(hidden) { if (!ac) return; if (hidden) ac.suspend().catch(() => {}); else if (on) ac.resume().catch(() => {}); }
@@ -572,8 +610,21 @@ window.SFX_LIVE = (() => {
     if (o.pan !== undefined && ac.createStereoPanner) { const p = ac.createStereoPanner(); p.pan.value = o.pan; g.connect(p); p.connect(o.bus || world); if (rec[2]) { const s = ac.createGain(); s.gain.value = rec[2]; p.connect(s); s.connect(conv); } }
     else { g.connect(o.bus || world); if (rec[2]) { const s = ac.createGain(); s.gain.value = rec[2]; g.connect(s); s.connect(conv); } }
     if (o.until !== undefined) { g.gain.setValueAtTime(gain, ac.currentTime + o.until); g.gain.setTargetAtTime(0, ac.currentTime + o.until, .08); }
-    src.start(at); src.stop(at + b.duration + .01);
+    src.start(at); src.stop(at + b.duration + .01); trace('fire', rec[0], at);
+    if (!o.bus) { const e = { src, g, end: at + b.duration }; shots.add(e); src.onended = () => shots.delete(e); }
     return src;
+  }
+  // every world one-shot still sounding or still to start; a crash or Sound off cuts them for good, as the film
+  // cuts a sound that runs into a silence window and never brings it back (score2.js:678-690, piano :697-711)
+  const shots = new Set();
+  function cutShots(t, at) {
+    for (const e of shots) {
+      if (e.end <= t) continue;
+      const G = e.g.gain; G.cancelScheduledValues(t); G.setValueAtTime(G.value, t); G.linearRampToValueAtTime(0, at);   // g also feeds the reverb send
+      try { e.src.stop(at + .005); } catch (x) { /* already stopped */ }
+    }
+    shots.clear(); pen = { from: -1, end: -1, gate: 0 };
+    if (scr.g) loopLevel(scr.g, false);   // the loop no longer waits under a cut pencil one-shot
   }
   // a piano note as score2.js:697-711 plays it: vel * MIX.bed, pan by pitch, its own send
   function piano(t, m, vel, bright, send, until) {
@@ -597,7 +648,7 @@ window.SFX_LIVE = (() => {
       case 'whoosh': return void fire(REC.whoosh(o.dir === -1 ? -1 : 1));
       case 'drawer': return void fire(REC.drawer(o.open !== false));
       case 'chime': return void fire(REC.chime((o.note ?? k) % 2 ? 1 : 0));
-      case 'pencil': { const gate = clamp(+(o.gate ?? 1) || 1, .1, 1); return void fire(REC.pencil(o.dur, gate, k % 3), MIX.scratch); }
+      case 'pencil': { const gate = clamp(+(o.gate ?? 1) || 1, .1, 1); return void pencilShot(REC.pencil(o.dur, gate, k % 3), gate, 0); }
       case 'done':   // score2.js:874-876: the tick, then a small "done" A5-C6
         fire(REC.tick(k)); piano(.06, 81, .2, .5, .25); piano(.22, 84, .22, .5, .25); return;
       case 'sour':   // score2.js:905-910: the ceramic, a sour C5 + Db5, a sigh Bb4 -> A4
@@ -605,6 +656,26 @@ window.SFX_LIVE = (() => {
         piano(.75, 70, .24, .35, .25, 1.8); piano(1.2, 69, .22, .35, .25, 2.6); return;
       default: return void fire(REC[type]());   // screen box dive nod stamp lock ding question
     }
+  }
+
+  // a one-shot pencil scratch; while it sounds, the scratch loop (a lower gate: captions, ink) is held silent,
+  // as the film's max-gate merge of overlapping scratch intervals keeps only the louder one (score2.js:977)
+  let pen = { from: -1, end: -1, gate: 0 };
+  function pencilShot(rec, gate, delay) {
+    const b = buf(rec), t0 = ac.currentTime + delay, t1 = t0 + b.duration - .2, live = pen.end > ac.currentTime;   // .2 = scratchBuf tail
+    pen = { from: live ? Math.min(pen.from, t0) : t0, end: Math.max(live ? pen.end : -1, t1), gate: live ? Math.max(pen.gate, gate) : gate };
+    fire(rec, MIX.scratch, delay);
+    if (scr.g) loopLevel(scr.g, false);
+  }
+  // (re)schedule the scratch loop's level from now: MIX.scratch, or 0 under a pencil one-shot of a gate >= its own
+  function loopLevel(g, start) {
+    const G = g.gain, t = ac.currentTime, up = MIX.scratch, v = start ? 0 : G.value;
+    G.cancelScheduledValues(t); G.setValueAtTime(v, t);
+    if (pen.gate >= scr.gate && pen.end > t) {
+      const a = Math.max(t, pen.from);
+      if (a > t + .012) { if (start) G.linearRampToValueAtTime(up, t + .012); G.setValueAtTime(start ? up : v, a); }
+      G.linearRampToValueAtTime(0, a + .03); G.setValueAtTime(0, pen.end); G.linearRampToValueAtTime(up, pen.end + .15);
+    } else G.linearRampToValueAtTime(up, t + .012);
   }
 
   // one key per typed letter (the name and reason fields): play('key') with the space variant
@@ -615,7 +686,8 @@ window.SFX_LIVE = (() => {
    * calls it for film-window beats as the act's tau crosses cue.t. The film's cue names are not play()
    * types; this maps them (sound.md §3):
    *   boot -> screen; click -> click (k = nth % 4); paper -> swipe in a1/a2, else paper (k = nth % 3);
-   *   pencil -> pencil {dur: .9, gate: 1}; tick -> done in a1/a2, else tick; type -> keys {dur, kind:
+   *   pencil -> the act's stage.scratch() interval that holds the cue (merged with the ones touching it, max
+   *   gate; score2.js:964-965 skips the cue itself then), else {dur: .9, gate: 1}; tick -> done in a1/a2, else tick; type -> keys {dur, kind:
    *   'laptop' in a1/a2, else 'agent'}; read -> slip in a3/a5, else readTick; whoosh -> whoosh, except
    *   a3's second whoosh (the push) -> dive; drawer -> drawer {open: nth even}; crack -> sour;
    *   hum-on -> hum(true); box, nod, print -> the same name.
@@ -630,7 +702,10 @@ window.SFX_LIVE = (() => {
       case 'boot': return play('screen');
       case 'click': return play('click', { k: nth % 4 });
       case 'paper': return play(shop ? 'swipe' : 'paper', { k: nth % 3 });
-      case 'pencil': return play('pencil', { dur: .9, gate: 1 });
+      case 'pencil': {   // the film plays the stage's own pencil interval here, not the cue's .9 s (score2.js:964-965)
+        if (ac.currentTime < silentUntil) return;
+        const p = pencilSpan(act, cue.t); return void pencilShot(REC.pencil(p.dur, p.gate, ACT_K[actKey] ?? 0), p.gate, p.delay);
+      }
       case 'tick': return play(shop ? 'done' : 'tick', { k: nth % 3 });
       case 'type': return play('keys', { dur: cue.dur, kind: shop ? 'laptop' : 'agent' });
       case 'read': return play(actKey === 'a3' || actKey === 'a5' ? 'slip' : 'readTick', { k: nth });
@@ -646,6 +721,7 @@ window.SFX_LIVE = (() => {
   function humTo(onOff, dur) {
     if (!ac) return;
     const t = ac.currentTime, g = humEnv.gain; g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(onOff ? 1 : 0, t + dur);
+    trace('hum', onOff ? 'on' : 'off', t);
   }
 
   /** The spark: world to 0 over 8 ms, the spark (unducked) at now + .008, hum off in .006 s; world held
@@ -660,6 +736,7 @@ window.SFX_LIVE = (() => {
     silentUntil = s + SPARK_LEN + .5;
     g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.linearRampToValueAtTime(0, s);
     g.setValueAtTime(0, silentUntil); g.linearRampToValueAtTime(1, silentUntil + .3);
+    cutShots(t, s);   // a chime, the ding or a pencil one-shot does not come back in the dark
     fire(REC.spark(), 1, .008, { bus: sparkBus });
   }
   /** Power back: lampOn({flash: [[0, 1/12]], lit: 3/12}) + wake(.25, 5/12) + hum on, all now. runtime.js
@@ -681,15 +758,15 @@ window.SFX_LIVE = (() => {
   function startLoop() {
     const rec = REC.loop(scr.gate); if (!has(ac, rec[0])) { warm([rec]); return; }
     const src = ac.createBufferSource(), g = ac.createGain(), s = ac.createGain(), b = buf(rec), t = ac.currentTime;
-    src.buffer = b; src.loop = true; g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(MIX.scratch, t + .012);
+    src.buffer = b; src.loop = true; loopLevel(g, true);
     s.gain.value = .05; src.connect(g); g.connect(world); g.connect(s); s.connect(conv);
     src.start(t, rng(Math.floor(t * 1000))() * LOOP);   // a fresh place in the loop each time
-    scr.node = src; scr.g = g;
+    scr.node = src; scr.g = g; trace('loop', rec[0], t);
   }
   function stopLoop(rel = .04) {
     if (!scr.node) return;
     const t = ac.currentTime, src = scr.node, g = scr.g; g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + rel);
-    src.stop(t + rel + .01); scr.node = scr.g = null;
+    src.stop(t + rel + .01); scr.node = scr.g = null; trace('loopStop', '', t);
   }
   /** The pencil scratch while a pencil is on the paper: gate 1 drawing, .45 on ones, .35 captions.
    *  @param {boolean} onOff @param {number=} gate */
@@ -703,6 +780,13 @@ window.SFX_LIVE = (() => {
   /** For tests: 'none' before enable() ever ran, else the AudioContext state. */
   const state = () => (ac ? ac.state : 'none');
   /** Tests only (tests/web/dev/sfx.html): run the engine on a given (Offline)AudioContext, all buffers built now. */
-  function __useContext(ctx) { warmQ = []; build(ctx); for (const r of WARM()) if (r[0] !== '@conv') buf(r); conv.buffer = buf(IR); on = true; }
-  return { TYPES, enable, disable, visibility, play, keyStroke: typeKey, filmCue, crash, power, hum, scratch, state, __useContext, get enabled() { return on; } };
+  function __useContext(ctx) {
+    warmQ = []; silentUntil = -1; pen = { from: -1, end: -1, gate: 0 }; shots.clear(); scr = { want: false, gate: 1, node: null, g: null };
+    for (const k in count) delete count[k];   // each render starts from a clean engine, whatever ran before
+    build(ctx); for (const r of WARM()) if (r[0] !== '@conv') buf(r); conv.buffer = buf(IR); on = true;
+  }
+  /** Tests only: fn(what, key, at) is told about every sound the engine starts ('fire' with the buffer's cache key,
+   *  'loop' / 'loopStop' for the scratch loop, 'hum' with 'on' / 'off'); null removes it. */
+  function __trace(fn) { tracer = typeof fn === 'function' ? fn : null; }
+  return { TYPES, enable, disable, visibility, play, keyStroke: typeKey, filmCue, crash, power, hum, scratch, state, __useContext, __trace, get enabled() { return on; } };
 })();

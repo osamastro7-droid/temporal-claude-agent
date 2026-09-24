@@ -3,7 +3,7 @@
 // pencil draws, fallback mode, the fitted widths, no '?' glyph for a Latin name, and that the name never
 // reaches the URL, the title, the console or storage (unless "Remember" is ticked).
 import { test, expect } from '@playwright/test';
-import { open, problems, state, sync, needStory, railTo, playToEnd } from './helpers.mjs';
+import { open, problems, state, sync, railTo, playToEnd } from './helpers.mjs';
 
 const FORTY = 'Maximiliana Wilhelmina Theodora Brightly';          // 40 characters
 // input -> expected. name: the cleaned name (panel); drawn: what the pencil draws; mode; checkout: the fitted
@@ -15,8 +15,8 @@ const NAMES = [
   { input: '\u0141ukasz', name: '\u0141ukasz', drawn: 'Lukasz', mode: 'font', panel: true },
   { input: 'Nguy\u1ec5n', name: 'Nguy\u1ec5n', drawn: 'Nguyen', mode: 'font' },
   // GAME_SPEC §10 writes '"Zoe" + U+0301 -> Zo\u00eb'; U+0301 is the acute (Zo\u00e9). Both decomposed forms are checked:
-  { input: 'Zoe\u0308', name: 'Zo\u00eb', drawn: 'Zo\u00eb', mode: 'font' },
-  { input: 'Zoe\u0301', name: 'Zo\u00e9', mode: 'font' },
+  { input: 'Zoe\u0308', label: 'Zoe + U+0308', name: 'Zo\u00eb', drawn: 'Zo\u00eb', mode: 'font' },
+  { input: 'Zoe\u0301', label: 'Zoe + U+0301', name: 'Zo\u00e9', mode: 'font' },
   { input: '\u0645\u062d\u0645\u062f', name: '\u0645\u062d\u0645\u062f', mode: 'fallback' },
   { input: '\u5f20\u4f1f', name: '\u5f20\u4f1f', mode: 'fallback' },
   { input: '\u{1f469}\u200d\u{1f4bb}', invalid: true },
@@ -24,15 +24,15 @@ const NAMES = [
   { input: '<img src=x onerror=alert(1)>', invalid: true, xss: true },
   { input: '     ', invalid: true },
   { input: FORTY, name: FORTY, drawn: FORTY, mode: 'font', fits: true },
-  // "first word only": the whole first word when it fits the field, else its first part at the hyphen (a cut with
-  // '...' is the last resort, GAME_SPEC §6 "Widths"; 'Alexandra-Katharina' alone is wider than the field's 512)
-  { input: 'Alexandra-Katharina Wolfgang', name: 'Alexandra-Katharina Wolfgang', drawn: 'Alexandra-Katharina Wolfgang', mode: 'font', checkout: ['Alexandra-Katharina', 'Alexandra'] },
-  { input: 'Ma\u202eria', name: 'Maria', drawn: 'Maria', mode: 'font' },
+  // "first word only" (GAME_SPEC §6 "Widths"): the whole name does not fit the checkout field, so the first word;
+  // 'Alexandra-Katharina' alone is wider than the field's 512 too, so it is cut and gets '...' (the spec's last step)
+  { input: 'Alexandra-Katharina Wolfgang', name: 'Alexandra-Katharina Wolfgang', drawn: 'Alexandra-Katharina Wolfgang', mode: 'font', firstWord: true },
+  { input: 'Ma\u202eria', label: 'Ma + U+202E + ria', name: 'Maria', drawn: 'Maria', mode: 'font' },
 ];
 
 test.describe('4 names', () => {
   for (const n of NAMES) {
-    test(`${JSON.stringify(n.input)} -> ${n.invalid ? 'invalid' : n.mode === 'fallback' ? 'fallback' : JSON.stringify(n.drawn)}`, async ({ page }) => {
+    test(`${n.label ?? JSON.stringify(n.input)} -> ${n.invalid ? 'invalid' : n.mode === 'fallback' ? 'fallback' : JSON.stringify(n.drawn ?? n.name)}`, async ({ page }) => {
       const w = await open(page);
       const dialogs = [], logs = [];
       page.on('dialog', d => { dialogs.push(d.message()); d.dismiss().catch(() => {}); });
@@ -86,12 +86,20 @@ test.describe('4 names', () => {
       expect(fit.w.co).toBeLessThanOrEqual(fit.max.co);
       expect(fit.w.mail).toBeLessThanOrEqual(fit.max.mail);
       expect(fit.w.line).toBeLessThanOrEqual(fit.max.line);
-      if (n.checkout) {                                                  // the first candidate that fits the field
-        const fits = await page.evaluate(c => c.map(t => NAME.measureName(t, 'font', NAME.BUDGET.field.cap, NAME.BUDGET.field.cd) <= NAME.BUDGET.field.max), n.checkout);
-        expect(fit.co, `first word only (fits: ${JSON.stringify(fits)})`).toBe(n.checkout[fits.indexOf(true)]);
+      // every budget follows the spec's rule, computed here from the measure alone (GAME_SPEC §6 "Widths"):
+      // the whole name if it fits, else the first word, else the first word cut between letters + '...'
+      const want = await page.evaluate(([d, mode]) => {
+        const B = NAME.BUDGET, rule = b => { const ok = t => NAME.measureName(t, mode, b.cap, b.cd) <= b.max;
+          if (ok(d)) return d; const w = d.split(' ')[0]; if (ok(w)) return w;
+          const ch = [...w]; while (ch.length > 1 && !ok(ch.join('') + '...')) ch.pop(); return ch.join('') + '...'; };
+        return { co: rule(B.field), mail: rule(B.mail), line: rule(B.line) };
+      }, [n.mode === 'font' ? s.drawnName : s.name, s.nameMode]);
+      expect([fit.co, fit.mail, fit.line], 'the fitted names (checkout, email, end card)').toEqual([want.co, want.mail, want.line]);
+      if (n.firstWord) {
+        expect(fit.co, 'first word only: nothing of the second word').not.toContain('Wolfgang');
+        expect(fit.co.startsWith(n.drawn.split(' ')[0]) || (fit.co.endsWith('...') && n.drawn.startsWith(fit.co.slice(0, -3))), `first word only: ${fit.co}`).toBe(true);
       }
-      else if (n.fits) expect(fit.co.endsWith('...') || fit.co === n.drawn || n.drawn.startsWith(fit.co)).toBe(true);
-      else expect(fit.co).toBe(n.mode === 'font' ? n.drawn ?? s.drawnName : n.name);
+      if (n.fits) expect([fit.co, fit.mail, fit.line].every(t => t.endsWith('...') ? n.drawn.startsWith(t.slice(0, -3)) : n.drawn.startsWith(t)), 'a 40-character name fits').toBe(true);
       // no '?' glyph for a Latin name: every letter the pencil draws is in the font (glyphOf falls back to '?')
       if (n.mode === 'font') expect(fit.missing, "letters the font lacks (drawn as '?')").toEqual([]);
       // the checkout's typed cels index by code point (GAME_SPEC §6 "Compile ids"; stageC.js:239 sliced UTF-16)
@@ -123,7 +131,6 @@ test.describe('4 names', () => {
   test('Change name on the end card forgets the stored name and empties the form', async ({ page }) => {
     test.setTimeout(120000);
     const w = await open(page);
-    await needStory(page);
     await page.locator('#name-input').fill('Zo\u00eb');
     await page.locator('#name-remember').check();
     await page.locator('#name-start').click(); await sync(page);

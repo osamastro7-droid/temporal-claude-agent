@@ -69,7 +69,7 @@ const fillIn = s => String(s).replace(/\{(\w+)\}/g, (m, k) => SAMPLE[k] ?? m);
 // 3b. panel texts: the shape (ifPlug keyed by crash class per stage, outcome per outcome caption), then
 // whether the content writer has written them yet
 {
-  const P = CONTENT.html.panel, CLS = [['any'], ['any'], ['any'], ['before', 'after'], ['before', 'after'], ['before', 'after'], ['wait'], ['before', 'money', 'after'], ['before', 'after'], ['any']];
+  const P = CONTENT.html.panel, CLS = [['any'], ['any'], ['any'], ['before', 'after'], ['before', 'after'], ['before', 'after'], ['wait', 'after'], ['before', 'money', 'after'], ['before', 'after'], ['any']];
   const shape = [];
   if (!Array.isArray(P.ifPlug) || P.ifPlug.length !== 10) shape.push('ifPlug: 10 stages');
   else P.ifPlug.forEach((o, i) => { const k = Object.keys(o ?? {}).sort().join(','); if (k !== CLS[i].slice().sort().join(',')) shape.push(`ifPlug[${i}] keys ${k} (want ${CLS[i].join(',')})`); });

@@ -5,16 +5,28 @@
 //    (667): film2.html?bare=1&frame=N against the docs/map engine (dev/film.html), both as the film draws it and
 //    through the game's own film-window path (SHOP.film, captions blanked; &via=shop&alpha=0), as film-compare.mjs.
 // 2. SSIM >= .95 on crops: the room dark (a9 tau 4.4) and the notes close-up (a9 tau 10.5) against the game's
-//    own dark room and close-up after a crash in stage 8 (a9's moment: after the refund, before the email).
+//    own dark room and close-up. THE GAME STATES (a9's moment: the refund is printed and written, the email is
+//    next and its notebook line is still empty, a9.js beat sheet 0.83-2.83 and "the next line is still empty"):
+//      - the path: name 'Zoë', the real rail chip 8 (STORY.canon(8): rows 0-3 written and checked, the receipt
+//        printed), then played through the story to 0.5 s before the commit of row 4's text (the email_customer
+//        line; Claude step 3 is running): the crash matrix's 's8-step3-before' moment;
+//      - DARK: the real #btn-plug click there, then exactly CRASH_T.spark + (4.4 - a9 T.spark 2.833) s of game
+//        time: 1.567 s after the prongs leave the socket, as a9 tau 4.4 is (phase 'dark', the notebook glowing);
+//      - NOTES: #btn-plug again (plug it back in) at that moment, then exactly CRASH_T.insert[0] + (10.5 - a9
+//        T.insert[0] 8.75) s: 1.75 s into the close-up, as a9 tau 10.5 is (scene 'notes').
 //    Crops avoid what legitimately differs: the caption band (captions sit at the top, kit.js CAPTION), the
 //    agent (a9 slumps from ONENV, the game from its own pose) and the notebook rows (a9 shows 2, the game 6).
-// Side-by-side crops (film left, game right) go to out/film-*.png for review by eye; film-compare.mjs writes
-// the full-frame sheet for the exact frames (out/compare-sheet.png).
+// Chromium runs here WITHOUT the project's GPU args: the film was rendered in software, and its offscreen
+// layers rasterized on the GPU differ by a channel from the CPU raster (frame 667 did, via=shop).
+// Side-by-side crops (film left, game right) go to out/film-*.png for review by eye, plus the whole frames
+// (out/film-dark-full.png, out/film-notes-full.png, half size); film-compare.mjs writes the full-frame sheet
+// for the exact frames (out/compare-sheet.png).
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
-import { MAP, ready, startWith, railTo, advance, sync, until, stageChain, commitOf, locate, playTo } from './helpers.mjs';
+import { MAP, ready, startWith, railTo, advance, sync, state, stageChain, commitOf, locate, playTo } from './helpers.mjs';
 
 test.skip(!process.env.FILM, 'set FILM=1 to compare with the film');
+test.use({ launchOptions: { args: [] } });
 
 /** Luminance of a canvas region (x, y, w, h in 1920x1080 units; the canvas must be 1920 wide), base64 bytes. */
 const lumaOf = (page, sel, boxes) => page.evaluate(([sel, boxes]) => {
@@ -104,30 +116,41 @@ test.describe('11 film comparison', () => {
     // the film
     await filmFrame(page, 'a9', 4.4);
     const filmDark = (await lumaOf(page, 'canvas', Object.values(ROOM_CROPS))).map(bytes);
+    const filmDarkFull = resample(bytes((await lumaOf(page, 'canvas', [[0, 0, 1920, 1080]]))[0]), 960, 540);
     await filmFrame(page, 'a9', 10.5);
     const filmNotes = bytes((await lumaOf(page, 'canvas', [NOTES_FILM]))[0]);
-    // the game: stage 8 before the email slip is written, pull the plug; the dark at a9's time after the spark
+    const filmNotesFull = resample(bytes((await lumaOf(page, 'canvas', [[0, 0, 1920, 1080]]))[0]), 960, 540);
+    // the game (the states are defined in the header)
+    const errs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
     await page.goto(MAP + '?test=1&raster=cpu');
     await ready(page);
-    const miss = await page.evaluate(() => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].filter(k => !Object.values(STORY.beats).some(b => b.stage === k)));
-    test.fixme(miss.length > 0, `needs game/story.js beats for stage(s) ${miss.join(',')} (story builder)`);
-    await startWith(page, 'Zoë');
+    await startWith(page, 'Zo\u00eb');
     await railTo(page, 8);
     const chain = await stageChain(page, 8), cm = commitOf(chain, 4, 't'), tgt = locate(chain, cm.abs - .5);
     await playTo(page, tgt.id, tgt.q);
-    const T = await page.evaluate(() => ROOM.CRASH_T);
+    const at = await state(page);
+    expect(at.book.slice(0, 5).map(r => [r.t, r.c]), 'rows 0-3 written and checked, the email line empty').toEqual([[1, 1], [1, 1], [1, 1], [1, 1], [0, 0]]);
+    expect(at.world.refunds).toBe(1);
+    const T = await page.evaluate(() => ROOM.CRASH_T), A9 = { spark: 34 / 12, insert: 105 / 12 };
     await page.locator('#btn-plug').click(); await sync(page);
-    await advance(page, T.spark + (4.4 - 2.833));                        // a9: spark at 2.833, the frame at 4.4
-    expect((await page.evaluate(() => window.__game.state())).worker.phase).toBe('dark');
+    await advance(page, T.spark + (4.4 - A9.spark));
+    expect((await state(page)).worker.phase, 'DARK: the phase').toBe('dark');
     const gameDark = (await lumaOf(page, '#cv', Object.values(ROOM_CROPS))).map(bytes);
+    const gameDarkFull = resample(bytes((await lumaOf(page, '#cv', [[0, 0, 1920, 1080]]))[0]), 960, 540);
     await page.locator('#btn-plug').click(); await sync(page);
-    await until(page, { scene: 'notes' }, 8);
-    await advance(page, 10.5 - 8.75);                                   // a9: the insert from 8.75
+    await advance(page, T.insert[0] + (10.5 - A9.insert));
+    expect((await state(page)).scene, 'NOTES: the scene').toBe('notes');
     const gameNotes = resample(bytes((await lumaOf(page, '#cv', [NOTES_GAME]))[0]), filmNotes.w, filmNotes.h);
+    const gameNotesFull = resample(bytes((await lumaOf(page, '#cv', [[0, 0, 1920, 1080]]))[0]), 960, 540);
+    expect(errs).toEqual([]);
+    await sheet(page, 'dark-full', filmDarkFull, gameDarkFull);
+    await sheet(page, 'notes-full', filmNotesFull, gameNotesFull);
     const scores = {};
     for (const [i, k] of Object.keys(ROOM_CROPS).entries()) { scores['dark.' + k] = ssim(filmDark[i], gameDark[i]); await sheet(page, 'dark-' + k, filmDark[i], gameDark[i]); }
     scores['notes.header'] = ssim(filmNotes, gameNotes); await sheet(page, 'notes-header', filmNotes, gameNotes);
-    test.info().annotations.push({ type: 'ssim', description: JSON.stringify(scores) });
+    const info = { ...scores, 'dark.fullFrame (not asserted)': ssim(filmDarkFull, gameDarkFull), 'notes.fullFrame (not asserted)': ssim(filmNotesFull, gameNotesFull) };
+    test.info().annotations.push({ type: 'ssim', description: JSON.stringify(info) });
+    console.log('SSIM', JSON.stringify(info, (k, v) => typeof v === 'number' ? +v.toFixed(4) : v));
     for (const [k, v] of Object.entries(scores)) expect(v, `SSIM ${k} (${JSON.stringify(scores)})`).toBeGreaterThanOrEqual(.95);
   });
 });

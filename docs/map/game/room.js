@@ -18,7 +18,11 @@
 // PENCILS: R.pencils null/absent (the default) = the room draws them itself: the graphite pencil at the
 // tip of any part being drawn on (R.parts, the envelope's u, the clock's u), Temporal's indigo pencil at
 // the tip of a notebook mark being written (R.book.rows between 0 and 1), the green pencil on the green
-// check. An array = exactly those pencils (drawPencilTool), nothing automatic.
+// check. The graphite and green pencils only while the scene is not dark (R.dark <= 0): a part frozen
+// half drawn by the crash has no hand drawing it; Temporal's indigo pencil keeps writing in the dark
+// (GAME_SPEC §1.4). An array = exactly those pencils (drawPencilTool), nothing automatic. A caller building its own
+// array takes the tips from ROOM.bookTip(row, part, u), ROOM.bookOpenTip(u) and ROOM.greenTip(u) (the same
+// cels the room draws; never the room's compile ids).
 // ============================================================
 window.ROOM = (() => {
   const RM = window.V2G2ROOM;
@@ -42,11 +46,17 @@ window.ROOM = (() => {
   const GREEN = { x: PR.x + MINI_RECEIPT.w / 2 + 14, y: SLOT_Y - 30 };       // from a9.js:152
   /** The notes close-up: page top-left on screen and scale (a9.js:68 INS; 1.1 so 6 rows fit: 575 = 960 - 770 / 2). */
   const INS = { x: 575, y: 312, s: 1.1 };
+  /** The close-up rows sit one ruled line lower than stageB's (a9.js:303 draws its rows at SB.rowY(k + 1), UP 84):
+   *  a blank line under the header, the film's pitch (84 page px); the 6th row runs down to the page's foot. */
+  const NOTE_DY = 84;
   /** a8's wobble, four drawings on twos (a8.js:144): R.wait.wob indexes it. */
   const WOB = { rot: [.035, -.024, .012, 0], dy: [-4, 1, 0, 0] };
   /** a8's stamp drawings by index (a8.js:161-173): 0 high, < impact coming down, < lift on the slip, lift, gone at end. */
   const STAMP_K = { impact: 2, lift: 6, end: 10 };
-  const PAUSE = { h: 58, gap: 26, dx: 294, dy: 0 };   // a8.js:65; beside the slip's right end (dx at slip scale 1)
+  const PAUSE = { h: 58, gap: 26, dx: 294, dy: 0 };
+  /** His badge slot (a8's box slot, cast.js:184, at room scale): lips at +-lip px, the slip cut at +cut px (a8.js:153
+   *  clips at the slot + 2 of its +-4 lips), the slot over x the slip's width long. */
+  const BSLOT = { lip: 3, cut: 1.5, over: 1.4 };   // a8.js:65; beside the slip's right end (dx at slip scale 1)
   const DASH = { from: [NB.x - 58, NB.y - 34], to: [SD.CAB.x + 118, SD.CAB.y - 262] };   // notebook -> cabinet drawer (a7.js:151 style)
 
   /**
@@ -290,7 +300,7 @@ window.ROOM = (() => {
       streakDown: compile({ strokes: [[-96, 40], [-48, 50], [48, 46], [96, 36]].map(([x, L], i) => stroke('a8/sd/' + i, [[x, -104 - L], [x, -104]], { width: 2.4, opacity: .8, pressure: [[0, .1], [.7, .9], [1, .5]] })) }, 'a8/streak-down2'),
       streakUp: compile({ strokes: [[-96, 44], [-48, 56], [0, 40], [48, 54], [96, 42]].map(([x, L], i) => stroke('a8/su/' + i, [[x, -40], [x, -40 - L]], { width: 2.4, opacity: .8, pressure: [[0, .1], [.6, .9], [1, .3]] })) }, 'a8/streak-up2'),
       stampFill: sf, rejected: compile(rej, 'game/rejected'),
-      slips: new Map(), parts: new Map(), notes: new Map(),
+      slips: new Map(), parts: new Map(), notes: new Map(), slots: new Map(),
     };
     return D;
   }
@@ -309,10 +319,15 @@ window.ROOM = (() => {
       if (mark(rows, k, 'strike') >= 1) pencilMarks(g, d.rowS[k], { color: 'indigo', alpha: a });
     }
   }
+  /** The finished marks of the desk notebook as one number (bit k: row k's text, 6 + k: its check, 12 + k: its strike). */
+  function doneMarks(rows) {
+    let m = 0;
+    for (let k = 0; k < 6; k++) m |= (mark(rows, k, 't') >= 1 ? 1 : 0) << k | (mark(rows, k, 'c') >= 1 ? 1 : 0) << (6 + k) | (mark(rows, k, 'strike') >= 1 ? 1 : 0) << (12 + k);
+    return m;
+  }
   /** The lift's first drawing (a9.js:131): the open book squashed, with its finished marks (a cel per set of marks). */
   function flatCel(rows) {
-    const d = build(); let m = 0;
-    for (let k = 0; k < 6; k++) m |= (mark(rows, k, 't') >= 1 ? 1 : 0) << k | (mark(rows, k, 'c') >= 1 ? 1 : 0) << (6 + k) | (mark(rows, k, 'strike') >= 1 ? 1 : 0) << (12 + k);
+    const d = build(), m = doneMarks(rows);
     if (!d.flats.has(m)) { const s = [...d.openRaw.strokes];
       d.rows.forEach((r, k) => { if (m >> k & 1) s.push(...r.text); if (m >> (6 + k) & 1) s.push(r.chk); if (m >> (12 + k) & 1) s.push(r.strike); });
       d.flats.set(m, compile({ strokes: sc(s, d.FLAT.sx, d.FLAT.sy) }, 'game/nb-flat@' + m)); }
@@ -330,21 +345,110 @@ window.ROOM = (() => {
       g.save(); g.translate(cv.logo.x, cv.logo.y); g.scale(cv.sx, cv.sy); drawLogo(g, 'temporal', 0, 0, 48, 1, { color: 'indigo' }); g.restore(); }
     g.restore();
   }
+  const ROW_CELS = { t: 'rowT', c: 'rowC', strike: 'rowS' };
+  /**
+   * Where Temporal's indigo pencil tip is while it writes a desk-notebook mark (room world): the tip of
+   * the very cel the room draws for row `row`'s `part` at progress u (the same point inkRows returns).
+   * story.js buildPencils uses it instead of reading the room's compile ids.
+   * @param {number} row 0..5 @param {'t'|'c'|'strike'} part @param {number} u 0..1 @returns {[number, number]}
+   */
+  function bookTip(row, part, u) {
+    const d = build(), cels = d[ROW_CELS[part] ?? 'rowT'];
+    return celTip(cels[clamp(Math.round(row) || 0, 0, 5)], clamp(u, 0, 1), NB.x, NB.y);
+  }
+  /** The indigo tip while the open desk notebook itself is drawn on (R.parts.book = u, a9.js:103-108), room world. */
+  const bookOpenTip = u => celTip(build().open, clamp(u, 0, 1), NB.x, NB.y);
+  /** The green pencil's tip on the receipt's green check at progress u (a9.js:152), room world. */
+  const greenTip = u => celTip(build().green, clamp(u, 0, 1), GREEN.x, GREEN.y);
   /** The marks being written right now (0 < progress < 1), world, over everything (a9.js:296-297). Returns the indigo tip. */
   function inkRows(c, rows) {
     const d = build(); let tip = null;
     for (let k = 0; k < 6; k++) for (const [p, cels] of [['t', d.rowT], ['c', d.rowC], ['strike', d.rowS]]) {
       const u = mark(rows, k, p); if (u <= 0 || u >= 1) continue;
-      at(c, NB, () => pencilMarks(c, cels[k], { progress: u, color: 'indigo' })); tip = celTip(cels[k], u, NB.x, NB.y);
+      at(c, NB, () => pencilMarks(c, cels[k], { progress: u, color: 'indigo' })); tip = bookTip(k, p, u);
     }
     return tip;
   }
   // the area of his left mitten (world), from AGENT's mitten geometry, a little grown (a9.js:248-253)
-  function mittenPath(P, s) {
+  function mittenPts(P, s) {
     const A = P[s], [cx, cy] = A.h, hr = A.hr, pt = A.point ?? 0, cs = Math.cos(hr), sn = Math.sin(hr);
     const w = ([x, y]) => [AGX + cx + x * cs - y * sn, AGY + cy + x * sn + y * cs], out = [];
     for (let i = 0; i <= 14; i++) { const a = -Math.PI * .95 + i / 14 * Math.PI * 1.9, rr = 22 + Math.max(0, Math.cos(a)) * 22 * pt + 3; out.push(w([Math.cos(a) * rr, Math.sin(a) * rr * .92])); }
-    return polyPath(out);
+    return out;
+  }
+  const mittenPath = (P, s) => polyPath(mittenPts(P, s));
+  /** The same area as mittenPath's clip, as a world box [x0, y0, x1, y1] under a9's rect (a9.js:291). */
+  function mittenBox(P, s) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of mittenPts(P, s)) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    return [Math.max(x0, AGX - 400), Math.max(y0, AGY - 400), Math.min(x1, AGX + 400), Math.min(y1, AGY - 2)];
+  }
+
+  // ---------------------------------------------------------------- in front of the light, in the dark
+  // Things that must stay in front of a glowing thing are drawn again after it, with the dark over them.
+  // The dark is the layer SD.dark(c, dk) built this drawing (fx layer 0: glowBehind uses layer 1 and
+  // nothing else in the room draws into layer 0), laid again over a small device box only, never a
+  // second SD.dark (which would clear and re-hatch the whole frame for the same pixels).
+  /** World box [x0, y0, x1, y1] -> the device box [px, py, pw, ph] around it under c's transform (2 px margin),
+   *  or null when c's transform turns (the room camera never does) or the box is empty. */
+  function devBox(c, b) {
+    const M = c.getTransform(); if (M.b || M.c || !(b[2] > b[0] && b[3] > b[1])) return null;
+    const xa = M.a * b[0] + M.e, xb = M.a * b[2] + M.e, ya = M.d * b[1] + M.f, yb = M.d * b[3] + M.f;
+    const px = Math.floor(Math.min(xa, xb)) - 2, py = Math.floor(Math.min(ya, yb)) - 2;
+    return [px, py, Math.ceil(Math.max(xa, xb)) + 2 - px, Math.ceil(Math.max(ya, yb)) + 2 - py];
+  }
+  /** Lay the dark layer again, alpha dk, over device box q only (c's clip applies). The mapping is SD.dark's own
+   *  (resetT, the layer drawn at 0, 0, W, H), so the pixels are the ones a second SD.dark(c, dk) gives.
+   *  off = [px, py]: c is a small canvas whose pixel (0, 0) is device pixel (px, py). */
+  function darkAgain(c, dk, q, off = null) {
+    const [L] = fxLayers(), kx = L.width / W, ky = L.height / H;
+    const sx = clamp(Math.floor(q[0] * kx / S), 0, L.width), sy = clamp(Math.floor(q[1] * ky / S), 0, L.height);
+    const sw = Math.min(L.width - sx, Math.ceil(q[2] * kx / S) + 2), sh = Math.min(L.height - sy, Math.ceil(q[3] * ky / S) + 2);
+    if (sw <= 0 || sh <= 0) return;
+    c.save(); resetT(c); if (off) c.translate(-off[0] / S, -off[1] / S); c.globalAlpha *= dk; c.drawImage(L, sx, sy, sw, sh, sx / kx, sy / ky, sw / kx, sh / ky); c.restore();
+  }
+  // small canvases for the redraws: the cached mitten redraws (a few poses) and one scratch
+  const _dkPool = { mitts: new Map(), max: 3, scratch: null };
+  const sizeCv = (cv, w, h) => { cv = cv ?? document.createElement('canvas'); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } const g = cv.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, w, h); return cv; };
+  /** Draw draw(g) (world transform) into device box q of a small canvas cv, clipped by clip(g) when given. */
+  function renderBit(c, q, cv, draw, clip) {
+    const M = c.getTransform(), g = sizeCv(cv, q[2], q[3]).getContext('2d');
+    g.setTransform(M.a, 0, 0, M.d, M.e - q[0], M.f - q[1]);
+    if (clip) { g.save(); clip(g); } draw(g); if (clip) g.restore();
+    return g.canvas;
+  }
+  const blitDev = (c, cv, q) => { c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(cv, 0, 0, q[2], q[3], q[0], q[1], q[2], q[3]); c.restore(); };
+  /**
+   * His left mitten in front of the glowing notebook (a9.js:291): the whole agent (with `front`) redrawn inside
+   * the mitten's area, then the dark over that area. His pose holds still for the whole dark, so the redraw
+   * (without the dark) is rendered once per (camera, key) into a small canvas and laid back with one
+   * drawImage: the same pixels up to rounding (source-over only; the cards.js figure() rule). The dark goes
+   * on after it, through the same clip, as a9's second SD.dark did.
+   * @param {string} key everything the redraw depends on besides the camera (pose, face, visor, held slip,
+   *   the finished notebook marks, the email)
+   */
+  function mittenInDark(c, dk, P, key, draw) {
+    const b = mittenBox(P, 'L'), q = devBox(c, b), clip = g => { g.beginPath(); g.rect(AGX - 400, AGY - 400, 800, 398); g.clip(); g.clip(mittenPath(P, 'L')); };
+    if (!q) { c.save(); clip(c); draw(c); SD.dark(c, dk); c.restore(); return; }
+    const M = c.getTransform(), k = `${M.a},${M.d},${M.e},${M.f}|${q}|${key}`, pool = _dkPool.mitts;
+    let cv = pool.get(k);
+    if (cv) { pool.delete(k); pool.set(k, cv); }   // most recent last
+    else {
+      let old = null; if (pool.size >= _dkPool.max) { const [ok, ov] = pool.entries().next().value; pool.delete(ok); old = ov; }
+      cv = renderBit(c, q, old, draw, clip); pool.set(k, cv);
+    }
+    blitDev(c, cv, q);
+    c.save(); clip(c); darkAgain(c, dk, q); c.restore();
+  }
+  /** Something small drawn again in front of a glow, with only its own pixels darkened: draw(g) into a
+   *  scratch canvas, the dark layer laid on it 'source-atop' (so it lands where draw painted, as the dark
+   *  lies over it in the room), then the scratch onto c. b = the world box that holds the drawing. */
+  function inDark(c, dk, b, draw) {
+    const q = devBox(c, b); if (!q) return;
+    const cv = renderBit(c, q, _dkPool.scratch, draw), g = cv.getContext('2d'); _dkPool.scratch = cv;
+    g.globalCompositeOperation = 'source-atop'; darkAgain(g, dk, q, q); g.globalCompositeOperation = 'source-over';
+    blitDev(c, cv, q);
   }
 
   // ---------------------------------------------------------------- a8's props at room scale
@@ -372,7 +476,10 @@ window.ROOM = (() => {
     const p = slipPlace(w), a = p.a * (o.alpha ?? 1); if (a <= 0) return;
     const S = slipCel(w.which), d = build(), ap = clamp(w.approved ?? 0, 0, 1), rj = clamp(w.rejected ?? 0, 0, 1), im = Math.max(ap, rj);
     c.save();
-    if (w.clip === 'badge') { const b = o.badge ?? BADGE; c.translate(b.x, b.y); c.rotate(b.lean ?? 0); c.beginPath(); c.rect(-3000, -3000, 6000, 3000); c.clip(); c.rotate(-(b.lean ?? 0)); c.translate(-b.x, -b.y); }
+    if (w.clip === 'badge') {   // only what is out of the slot shows (a8.js:153): the cut runs along the slot, across the slip
+      const b = o.badge ?? BADGE, t = p.rot + Math.PI / 2;
+      c.translate(b.x, b.y); c.rotate(t); c.beginPath(); c.rect(-3000, -3000, 6000, 3000 + BSLOT.cut); c.clip(); c.rotate(-t); c.translate(-b.x, -b.y);
+    }
     c.translate(p.x, p.y); c.rotate(p.rot); c.scale(p.s, p.s * Math.max(.07, w.sy ?? 1));
     if (!o.color) { c.save(); c.globalAlpha *= a; c.fillStyle = COL.paper; c.fillRect(-S.w / 2, -44, S.w, 88); c.restore(); }
     const col = o.color ?? 'graphite';
@@ -385,6 +492,17 @@ window.ROOM = (() => {
       pencilMarks(c, cel, { progress: 1, alpha: a * v, widthScale: 1.1, color: col }); c.restore();
     }
     c.restore();
+  }
+  /** The slot in his badge a slip rises out of / sinks into while R.wait.clip is 'badge': a8's box slot
+   *  (cast.js:182-184 boxDrawing 'box/slot': a thin loop, the near lip a little right; paper inside), BSLOT.over x the slip's
+   *  width long, across the slip's way through badge point b. Drawn before the slip: the slip covers the far lip
+   *  and is cut just past the middle (BSLOT.cut), so the near lip shows over its cut edge, as in a8 (frame 1887). */
+  function drawSlot(c, w, b) {
+    const p = slipPlace(w), L = Math.round(88 * p.s * BSLOT.over), d = build(), h = BSLOT.lip;
+    const pts = [[-L / 2, -h], [L / 2, -h], [L / 2 + 2, h], [-L / 2 + 2, h]];
+    if (!d.slots.has(L)) d.slots.set(L, { fill: polyPath(pts), cel: compile({ strokes: [loopStroke('game/badge-slot/' + L, pts, { width: 2.4, corner: .5, over: 6 })] }, 'game/badge-slot/' + L) });
+    const sl = d.slots.get(L);   // paper inside the slit (the spark does not show through it), then its lips
+    c.save(); c.translate(b.x, b.y); c.rotate(p.rot + Math.PI / 2); c.save(); c.globalAlpha *= p.a; c.fillStyle = COL.paper; c.fill(sl.fill); c.restore(); pencilMarks(c, sl.cel, { alpha: p.a }); c.restore();
   }
   /** Claude's pause sign beside the waiting slip (a8.js:73, :226-228): alpha = R.wait.pause. */
   function drawPause(c, w) {
@@ -417,11 +535,30 @@ window.ROOM = (() => {
     if (k === STAMP_K.lift + 1) return { y: IMPACT - HI, rot: REST - .08 };
     return { gone: true, y: IMPACT - HI, rot: REST - .08, trail: k === STAMP_K.lift + 2 ? .9 : .45 };
   }
-  /** a8 drawStamp (a8.js:174-183) at the waiting slip, scaled with it. */
+  /** a8 drawStamp (a8.js:174-183) at the waiting slip, scaled with it. Reduced motion (no speed lines) is
+   *  story.js stampR's job: it holds drawing 0 as `hover` before the impact and drops the trail drawings
+   *  (k >= STAMP_K.lift + 2), which play.spec.mjs checks; the room draws whatever drawing it is given. */
+  function stampPlace(st, w) {
+    const p = stampPose(Math.round(st.k ?? 0), !!st.hover); if (!p) return null;
+    const s = (w && w.s) || WAIT.s, dr = w ? (w.rot ?? REST) - REST : 0;
+    return { p, x: w ? w.x ?? WAIT.x : WAIT.x, y: (w ? w.y ?? WAIT.y : WAIT.y) + p.y * s, rot: p.rot + dr, k: STAMP_S * s };
+  }
+  /** The world box [x0, y0, x1, y1] that holds drawStamp's marks (all its cels, turned and scaled, + 8 px). */
+  function stampBox(st, w) {
+    const P = stampPlace(st, w); if (!P) return [0, 0, 0, 0];
+    const d = build(), cs = Math.cos(P.rot) * P.k, sn = Math.sin(P.rot) * P.k; let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const cel of [SB.D.stamp, d.impact, d.streakDown, d.streakUp]) {
+      const [bx, by, bw, bh] = cel.bounds;
+      for (const [u, v] of [[bx, by], [bx + bw, by], [bx, by + bh], [bx + bw, by + bh]]) {
+        const X = P.x + u * cs - v * sn, Y = P.y + u * sn + v * cs; x0 = Math.min(x0, X); y0 = Math.min(y0, Y); x1 = Math.max(x1, X); y1 = Math.max(y1, Y);
+      }
+    }
+    return [x0 - 8, y0 - 8, x1 + 8, y1 + 8];
+  }
   function drawStamp(c, st, w) {
-    const p = stampPose(Math.round(st.k ?? 0), !!st.hover); if (!p) return;
-    const d = build(), s = (w && w.s) || WAIT.s, x = w ? w.x ?? WAIT.x : WAIT.x, y = (w ? w.y ?? WAIT.y : WAIT.y) + p.y * s, dr = w ? (w.rot ?? REST) - REST : 0;
-    c.save(); c.translate(x, y); c.rotate(p.rot + dr); c.scale(STAMP_S * s, STAMP_S * s);
+    const P = stampPlace(st, w); if (!P) return;
+    const d = build(), p = P.p;
+    c.save(); c.translate(P.x, P.y); c.rotate(P.rot); c.scale(P.k, P.k);
     if (p.impact) pencilMarks(c, d.impact);
     if (p.streak) pencilMarks(c, d.streakDown, { alpha: p.streak });
     if (p.trail) pencilMarks(c, d.streakUp, { alpha: p.trail });
@@ -478,15 +615,41 @@ window.ROOM = (() => {
   }
 
   // ---------------------------------------------------------------- the room
+  /**
+   * The still back of the room, a9.js:262-264: the paper, the room, the cabinet with its drawer and folder, the
+   * lamp. It only changes with the drawer, the folder and the lamp (0 or 1), so it is rendered once per
+   * (canvas size, camera, drawer, folder, lamp) into a full-frame canvas (a pool of BG_POOL, most recent kept)
+   * and laid back with one drawImage: the same pixels up to rounding (source-over only, the cards.js figure()
+   * rule), about 1,300 fewer strokes per drawing. Only the folder's rise and sink (stage 4) misses.
+   */
+  const BG_POOL = 2, _bg = new Map();
+  function background(c, drawer, folder, lamp) {
+    const draw = g => {
+      paperSheet(g); SD.room(g); SD.at(g, SD.CAB, SD.D.cab);
+      RM.drawer(g, drawer, folder);
+      g.save(); g.translate(LAMPX - SD.LAMP.x, 0); SD.lamp(g, lamp); g.restore();
+    };
+    const M = c.getTransform(), cw = c.canvas.width, ch = c.canvas.height;
+    if (M.b || M.c) { draw(c); return; }
+    const k = `${cw}x${ch}|${S}|${M.a},${M.d},${M.e},${M.f}|${drawer}|${folder}|${lamp}`;
+    let cv = _bg.get(k);
+    if (cv) { _bg.delete(k); _bg.set(k, cv); }   // most recent last
+    else {
+      let old = null; if (_bg.size >= BG_POOL) { const [ok, ov] = _bg.entries().next().value; _bg.delete(ok); old = ov; }
+      cv = sizeCv(old, cw, ch); const g = cv.getContext('2d'); g.setTransform(M); draw(g); _bg.set(k, cv);
+    }
+    c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(cv, 0, 0); c.restore();
+  }
   /** R.slip -> an a3 slip placement {x, y, s, rot, clipY?} (RM.slip, a3.js:180-184). */
   const slipOf = p => { const o = { x: p.x, y: p.y, s: p.s, rot: p.rot ?? 0 }; if (p.clipY !== undefined && p.clipY !== null) o.clipY = p.clipY; return o; };
   /**
    * Draw the whole room for R: sets the room camera cam(c, SD.CAM.x, SD.CAM.y, SD.CAM.zoom), the
-   * paper, then everything in R in a9's draw order (a9.js:260-300): room, cabinet + drawer, lamp at x 640,
-   * receipt, printer, LED, tray (+ request), him (the notebook, the email and the keyboard through `hold`,
-   * the request in his hands), desk, socket rig, the things in the air (the request, the email, the tool
-   * slip with its pause sign, the clock, the stamp, the dashed line), the dark, the glow, then the marks
-   * Temporal is writing and the pencils. The caller did resetFrame(ctx) before and does resetT +
+   * paper, then everything in R in a9's draw order (a9.js:260-300): room, cabinet + drawer, lamp at x 640
+   * (one cached layer, see background), receipt, printer, LED, tray (+ request), him (the notebook, the email
+   * and the keyboard through `hold`, the request in his hands), desk, socket rig, the things in the air (the
+   * request, the email, the tool slip with its pause sign and, while it is in his badge, the badge slot, the
+   * clock, the stamp, the dashed line), him while he is being drawn on (a3's order), the dark, the glow (his
+   * mitten and a hovering stamp drawn again in front of it, dark), then the marks Temporal is writing and the pencils. The caller did resetFrame(ctx) before and does resetT +
    * captions + vignette after.
    * @param {CanvasRenderingContext2D} c @param {object} R  story.js SCHEMAS "ROOM STATE"
    * @returns {boolean} false (the caller draws the vignette; see SHOP.frame)
@@ -495,10 +658,8 @@ window.ROOM = (() => {
     const r = { ...BASE_R, ...R }, d = build(), parts = { ...BASE_R.parts, ...(R && R.parts) }, part = k => clamp(parts[k] ?? 1, 0, 1);
     const bk = { ...BASE_R.book, ...r.book }, rows = bk.rows ?? BASE_R.book.rows, lk = LIFT_K[clamp(Math.round((bk.k ?? 0) * 5), 0, 5)];
     const env = r.envelope ?? { state: 'none' }, sl = r.slip, tips = {}, pa = poseArg(r.pose), P = poseData(pa);
-    cam(c, SD.CAM.x, SD.CAM.y, SD.CAM.zoom); paperSheet(c);
-    SD.room(c); SD.at(c, SD.CAB, SD.D.cab);
-    RM.drawer(c, r.drawer ?? 0, r.folder ?? 0);
-    c.save(); c.translate(LAMPX - SD.LAMP.x, 0); SD.lamp(c, r.lamp ?? 1); c.restore();
+    cam(c, SD.CAM.x, SD.CAM.y, SD.CAM.zoom);
+    background(c, r.drawer ?? 0, r.folder ?? 0, r.lamp ?? 1);
     receipt(c, r.receipt ? r.receipt.e ?? 0 : 0);
     if (part('printer') > 0) { RM.printer(c, part('printer')); if (part('printer') < 1) tips.graphite = celTip(SD.D.printer, part('printer'), PR.x, PR.y); }
     if (r.led) { c.save(); c.fillStyle = COL.graphite; c.globalAlpha = .85; c.beginPath(); c.arc(PR.x + 122, PR.y - 30, 4.2, 0, TAU); c.fill(); c.restore(); }   // a9.js:269
@@ -511,23 +672,26 @@ window.ROOM = (() => {
       if (eu > 0) { const t = RM.envelope(g, { u: eu }); if (t && eu < 1) tips.graphite = t; }
       RM.keyboard(g, Pz);
     };
-    if (ub > 0 && ub < 1) tips.indigoBook = celTip(d.open, ub, NB.x, NB.y);
+    if (ub > 0 && ub < 1) tips.indigoBook = bookOpenTip(ub);
     const ua = part('agent');
     if (ua >= 1) RM.agent(c, { pose: pa, face: r.face, visor: r.visor, slip: r.held, front });
-    else { front(c, null); if (ua > 0) tips.graphite = RM.agent(c, { pose: pa, face: r.face, progress: ua }) ?? tips.graphite; }   // a3.js:470 partItem('agent')
+    else front(c, null);   // a3.js:307; the agent being drawn on comes after the room (below)
     SD.desk(c);
     SD.socketRig(c, { pull: r.pull ?? 0, hand: r.hand ?? undefined, spark: r.spark ?? 0 });
     if (sl && !sl.tray) RM.slip(c, slipOf(sl));
     // the things in the air, in front of him
     const ck = r.receipt ? r.receipt.check ?? 0 : 0;
-    if (ck > 0) { at(c, GREEN, () => pencilMarks(c, d.green, { progress: ck, color: 'green' })); if (ck < 1) tips.green = celTip(d.green, ck, GREEN.x, GREEN.y); }
+    if (ck > 0) { at(c, GREEN, () => pencilMarks(c, d.green, { progress: ck, color: 'green' })); if (ck < 1) tips.green = greenTip(ck); }
     if (!envOnDesk(env)) envelopeOff(c, env);
     if (r.dash) dash(c, r.dash);
     if (r.clock && part('clock') > 0) { const cu = Math.min(clamp(r.clock.u ?? 1, 0, 1), part('clock')), t = drawClock(c, cu, r.clock.angle ?? 0, clamp(r.clock.alpha ?? 1, 0, 1)); if (t) tips.graphite = t; }
     const w = r.wait, wb = w && w.clip === 'badge' ? badgeOf(r.pose) : null;
-    if (w) { drawPause(c, w); drawSlip(c, w, { badge: wb }); }
+    if (w) { drawPause(c, w); if (wb) drawSlot(c, w, wb); drawSlip(c, w, { badge: wb }); }
     if (r.stamp) drawStamp(c, r.stamp, w);
     RM.question(c, r.q ?? 0, r.q2 ?? 0);
+    // the agent being drawn on: a3's stRoom item, drawn over the finished room (a3.js:457, :505), always
+    // pose 'rest', face 'open' (the pencil's tip follows the 'agent/rest' cel: story.js partTip.agent)
+    if (ua > 0 && ua < 1) tips.graphite = RM.agent(c, { pose: 'rest', face: 'open', progress: ua }) ?? tips.graphite;
     // the dark; only what Temporal wrote down glows in it (a9.js:286-295)
     const dk = clamp(r.dark ?? 0, 0, 1); SD.dark(c, dk);
     const gl = dk > 0 ? bk.glow ?? 0 : 0;
@@ -535,8 +699,8 @@ window.ROOM = (() => {
       glowBehind(c, g2 => at(g2, NB, () => openBook(g2, rows)), gl, { blur: 7, strength: 1 });
       at(c, NB, () => openBook(c, rows, Math.min(1, gl)));
       // his left mitten rests on it: redraw the mitten (and only it) in the dark, in front of the light
-      if (ua >= 1) { c.save(); c.beginPath(); c.rect(AGX - 400, AGY - 400, 800, 398); c.clip(); c.clip(mittenPath(P, 'L'));
-        RM.agent(c, { pose: pa, face: r.face, visor: r.visor, slip: r.held, front }); SD.dark(c, dk); c.restore(); }
+      if (ua >= 1) mittenInDark(c, dk, P, JSON.stringify([r.pose, r.face, r.visor, r.held ?? null, doneMarks(rows), eu]),
+        g => RM.agent(g, { pose: pa, face: r.face, visor: r.visor, slip: r.held, front }));
       pencilMarks(c, d.rays, { progress: clamp(bk.rays ?? 1, 0, 1), color: 'indigo', alpha: Math.min(1, gl) });
     }
     const wg = w && dk > 0 ? w.glow ?? 0 : 0;
@@ -544,14 +708,17 @@ window.ROOM = (() => {
       glowBehind(c, g2 => drawSlip(g2, w, { badge: wb, color: 'indigo' }), wg, { blur: 7, strength: 1 });
       drawSlip(c, w, { alpha: Math.min(1, wg), badge: wb });
       if (!w.clip && Math.abs((w.x ?? WAIT.x) - WAIT.x) < 1 && Math.abs((w.y ?? WAIT.y) - WAIT.y) < 1) pencilMarks(c, d.slipRays, { progress: clamp(bk.rays ?? 1, 0, 1), color: 'indigo', alpha: Math.min(1, wg) });
+      // a stamp decided in the dark hovers in front of the slip (a8 drawing 0): drawn again over the glowing slip, dark
+      if (r.stamp) inDark(c, dk, stampBox(r.stamp, w), g => drawStamp(g, r.stamp, w));
     }
     // Temporal's pencil keeps writing, even in the dark (GAME_SPEC §1.4)
     if (lk <= 0 && ub >= 1) { const t = inkRows(c, rows); if (t) tips.indigo = t; }
     if (r.pencils) for (const p of r.pencils) drawPencilTool(c, [p.x, p.y], { color: p.color, lift: p.lift, angle: p.angle ?? .62 });
     else {
-      if (tips.graphite) drawPencilTool(c, tips.graphite, { color: 'graphite', lift: 0, angle: .62 });
+      // no hand draws in the dark: a part the crash froze half drawn keeps no graphite/green pencil
+      if (tips.graphite && dk <= 0) drawPencilTool(c, tips.graphite, { color: 'graphite', lift: 0, angle: .62 });
       if (tips.indigo || tips.indigoBook) drawPencilTool(c, tips.indigo ?? tips.indigoBook, { color: 'indigo', lift: 0, angle: .62 });
-      if (tips.green) drawPencilTool(c, tips.green, { color: 'green', lift: 0, angle: .62 });
+      if (tips.green && dk <= 0) drawPencilTool(c, tips.green, { color: 'green', lift: 0, angle: .62 });
     }
     return false;
   }
@@ -579,7 +746,7 @@ window.ROOM = (() => {
   }
   /**
    * The notes close-up (scene 'notes'): a9 insert() (a9.js:306-330) with R.notes = N = {rows, branch,
-   * under, ring, arrow, alpha, glow?}; the page at INS (top-left 575, 312, scale 1.1: centred, 6 stageB rows).
+   * under, ring, arrow, alpha, glow?}; the page at INS (top-left 575, 312, scale 1.1: centred, 6 stageB rows, NOTE_DY lower).
    *   under[k]  0..1 LINEAR progress of row k's indigo underline (eased here, a9.js:316); an earlier
    *             underline fades to .3 while the next one draws (a9.js:317 `past`)
    *   ring      {row, part 't'|'c', u 0..1}: circled mark (a9.js:321; 't' circles the whole line)
@@ -595,8 +762,9 @@ window.ROOM = (() => {
     cam(c, CX, CY, 1); paperSheet(c);
     c.save(); c.globalAlpha *= clamp(N.alpha ?? 1, 0, 1);
     c.save(); c.translate(INS.x - SB.NB.x * INS.s, INS.y - SB.NB.y * INS.s); c.scale(INS.s, INS.s);
-    glowBehind(c, g2 => noteRows(g2, rows, labels), .55 * clamp(N.glow ?? 1, 0, 1), { blur: 8, strength: .8 });
+    glowBehind(c, g2 => { g2.save(); g2.translate(0, NOTE_DY); noteRows(g2, rows, labels); g2.restore(); }, .55 * clamp(N.glow ?? 1, 0, 1), { blur: 8, strength: .8 });
     SB.notebook(c, { rows: [] });
+    c.translate(0, NOTE_DY);   // the rows, their underlines, the ring and the arrow: one ruled line down (a9.js:311)
     noteRows(c, rows, labels);
     const under = N.under ?? [];
     for (let k = 0; k < 6; k++) {   // reading: each saved line underlined in turn (a9.js:315-319)
@@ -695,7 +863,8 @@ window.ROOM = (() => {
    *   - A CRASH DURING A RECOVERY (K.prev set): the WORKER_FIELDS start from ROOM.snap(R, K.prev.rec)
    *     (the props as they had snapped) and the crash rules apply to them; pose, face, visor and the
    *     notebook lift start from ROOM.wakeAt(K.prev.tu) (what was on screen); the slump starts from that
-   *     pose (a poseKey name for an inbetween); a lifted notebook comes down one drawing per 1/12 s.
+   *     pose (a poseKey name for an inbetween); a lifted notebook comes down one drawing per 1/12 s, in
+   *     his hands (the pose is the lift drawing of that k until the slump takes over).
    * @param {object} R  the room state at G.frozenQ (the frozen beat's R)
    * @param {{phase: string, t: number, tc: number, tu: number|null, reduced: boolean, when: string,
    *   saved: {wait: boolean, drawer: boolean, envelope: boolean}, rec: object|null,
@@ -727,10 +896,14 @@ window.ROOM = (() => {
       if (w0) Object.assign(out, { pose: w0.pose, face: w0.face, visor: w0.visor, book: { ...bk0, k: w0.k } });
       return out;
     }
-    const from = poseName(pose0), ki = Math.max(0, Math.round(k0 * 5) - Math.floor((q - T.spark) * 12));
+    const ki = Math.max(0, Math.round(k0 * 5) - Math.floor((q - T.spark) * 12));
+    // a re-crash with the notebook up: his hands bring it down with it (the lift drawing of its k), then he slumps from there
+    const poseNow = w0 && Math.round(k0 * 5) > 0 ? liftPose(ki) : pose0, from = poseName(poseNow);
     out.face = q < T.spark + T.wide ? 'wide' : 'off';
     out.visor = q < T.spark + T.visorSteps[1][0] ? .45 : 1;
-    out.pose = q < T.slump[0] ? pose0 : q < T.slump[1] ? { from, to: 'slump', t: easeIn((q - T.slump[0]) / (T.slump[1] - T.slump[0])) } : 'slump';
+    // the slump's inbetween, snapped to AGENT's 1/12 so its ends reuse the key drawings' cache (no 'x>slump@0.000' twin)
+    const st = Math.round(12 * (q < T.slump[0] ? 0 : q < T.slump[1] ? easeIn((q - T.slump[0]) / (T.slump[1] - T.slump[0])) : 1)) / 12;
+    out.pose = st <= 0 ? poseNow : st >= 1 ? 'slump' : { from, to: 'slump', t: st };
     out.book = { ...bk0, k: ki / 5, glow: ki <= 0 ? glow : 0, rays };
     out.led = 0;
     const w = r.wait;
@@ -803,5 +976,5 @@ window.ROOM = (() => {
   function warm(list) { const g = scratchCtx(); for (const R of list) { g.save(); try { if (R && R.notes) notes(g, R); else frame(g, R); } finally { g.restore(); } } }
 
   return { PULLED, WAIT, CLOCK, NB, LAMPX, BADGE, INS, LIFT_K, WOB, STAMP_K, CRASH_T, POSES, WORKER_FIELDS, poseOf, poseKey, poseArg, badgeOf, BASE_R,
-    frame, notes, crash, darkOf, wakeAt, snap, idle, blinkAt, wobAt, clockAngle, flightAt, toScreen, boxToScreen, hotspots, warm };
+    frame, notes, crash, darkOf, bookTip, bookOpenTip, greenTip, wakeAt, snap, idle, blinkAt, wobAt, clockAngle, flightAt, toScreen, boxToScreen, hotspots, warm };
 })();

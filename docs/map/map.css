@@ -62,6 +62,11 @@ a:hover { color: var(--graphite); text-decoration-thickness: 2px; }
 .small { font: 700 .78rem/1.3 var(--font); text-transform: uppercase; letter-spacing: .09em; color: var(--graphite-2); margin: 0 0 8px; }
 .note, .why { color: var(--graphite-2); font-size: .92rem; margin: 0; }
 .why:empty, .note:empty, p:empty { display: none; }
+/* ...except the live regions: an empty live region must stay in the accessibility tree, or the next text
+   written into it (every caption after a gap, "The server crashes.") is not announced by several readers */
+.status:empty { display: block; }
+#name-why:empty { display: block; height: 0; margin-top: -10px; }         /* -10px cancels the name form's grid gap */
+#why-action:empty { display: block; height: 0; margin-top: -6px; }        /* -6px cancels the .ctl grid gap */
 [hidden] { display: none !important; }
 kbd { font: 600 .82rem/1 var(--mono); }
 
@@ -95,10 +100,16 @@ button { font: inherit; color: inherit; }
   font: 650 1rem/1.2 var(--font); cursor: pointer; touch-action: manipulation; text-align: center;
   transition: transform .12s ease, background-color .12s ease;
 }
-.btn:hover:not(:disabled):not([aria-disabled="true"]) { background-color: var(--paper-lo); transform: translateY(-1px); }
+/* hover only where a pointer really hovers: on a touch screen :hover sticks after a tap */
+@media (hover: hover) {
+  .btn:hover:not(:disabled):not([aria-disabled="true"]) { background-color: var(--paper-lo); transform: translateY(-1px); }
+  .btn.primary:hover:not(:disabled):not([aria-disabled="true"]) { background-color: transparent; filter: brightness(1.25); }
+  .btn.toggle:hover { background-image: var(--i-box-soft); }
+  .rail .chip:hover .chip-n { background-color: var(--paper-lo); border-radius: 50%; }
+  .rail li:first-child .chip:hover .chip-n { border-radius: 3px; }
+}
 .btn:active:not(:disabled):not([aria-disabled="true"]) { transform: translateY(1px); }
 .btn.primary { background-image: var(--i-box-fill); color: var(--paper); }
-.btn.primary:hover:not(:disabled):not([aria-disabled="true"]) { background-color: transparent; filter: brightness(1.25); }
 .btn.plug { background-image: var(--i-box-red); color: var(--red); }
 .btn.plug::before { content: ""; width: 22px; height: 22px; flex: none; background: var(--i-plug-red) no-repeat center / contain; }
 .btn.plug[aria-pressed="true"] { background-image: var(--i-box-red-fill); color: var(--paper); }
@@ -116,7 +127,6 @@ button { font: inherit; color: inherit; }
 .btn.toggle { min-height: 44px; padding: 8px 14px 8px 12px; font-weight: 550; font-size: .95rem; background-image: none; }
 .btn.toggle::before { content: ""; width: 22px; height: 22px; flex: none; background: var(--i-tick-off) no-repeat center / contain; }
 .btn.toggle[aria-pressed="true"]::before { background-image: var(--i-tick-on); }
-.btn.toggle:hover { background-image: var(--i-box-soft); }
 
 /* focus: graphite (indigo is Temporal's), always visible */
 :focus { outline: none; }
@@ -124,14 +134,20 @@ button { font: inherit; color: inherit; }
 .btn.primary:focus-visible, .btn.plug[aria-pressed="true"]:focus-visible { outline-offset: 4px; }
 
 /* ---------- the control bar ---------- */
-.controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 24px; align-items: start; margin-top: 18px; }
+.controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 24px; align-items: start; margin-top: 14px; }
 .ctl { display: grid; gap: 6px; min-width: 0; }
 .btns { display: flex; flex-wrap: wrap; gap: 10px; }
 .ctl-act .btn { min-width: 132px; }
 .ctl-plug { justify-items: end; text-align: right; }
 .ctl-plug .why { max-width: 32ch; }
 .why { font-style: italic; }
-.toggles { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 6px; padding-top: 10px; background: var(--i-rule) no-repeat left top / 100% 5px; }
+/* the settings row: under the rail (outside the control bar, so it also shows on the start and end cards) */
+.toggles { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 12px; padding-top: 8px; background: var(--i-rule) no-repeat left top / 100% 5px; }
+/* the panel's prediction and outcome repeated under the plug: only while the panel is below the canvas */
+.ctl-if { grid-column: 1 / -1; display: grid; gap: 8px; }
+.ctl-if .label { font: 700 .74rem/1.3 var(--font); text-transform: uppercase; letter-spacing: .09em; color: var(--red); }
+.ctl-if .if { margin: 0; font-size: .92rem; padding-left: 12px; background: linear-gradient(var(--red), var(--red)) no-repeat 0 3px / 2px calc(100% - 6px); }
+.ctl-if .outcome { margin: 0; font-size: .92rem; padding: 8px 12px 8px 36px; background: var(--paper-lo) var(--i-zig-red) no-repeat 12px 14px / 16px 9px; border-radius: 3px; }
 .endbar { grid-template-columns: minmax(0, 1fr); }
 
 /* ---------- the name form (the start card) ---------- */
@@ -153,7 +169,7 @@ button { font: inherit; color: inherit; }
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 /* ---------- the stage rail: numbered rings on a pencil line ---------- */
-.rail { margin-top: 26px; }
+.rail { margin-top: 14px; }
 .game[data-scene="start"] .rail { display: none; }
 .rail ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 10px 4px; }
 .rail li { position: relative; display: flex; justify-content: center; min-width: 0; }
@@ -168,8 +184,6 @@ button { font: inherit; color: inherit; }
 }
 .rail li:first-child .chip-n { width: auto; min-width: 58px; padding: 0 10px; background-image: var(--i-box); font: 700 .95rem/1 var(--font); }
 .rail .chip-t { font-size: .78rem; line-height: 1.25; color: var(--graphite-2); text-align: center; overflow-wrap: anywhere; }
-.rail .chip:hover .chip-n { background-color: var(--paper-lo); border-radius: 50%; }
-.rail li:first-child .chip:hover .chip-n { border-radius: 3px; }
 .rail .chip[aria-current] .chip-n { background-image: var(--i-ring-fill); color: var(--paper); }
 .rail li:first-child .chip[aria-current] .chip-n { background-image: var(--i-box-fill); }
 .rail .chip[aria-current] .chip-t { color: var(--graphite); font-weight: 650; }
@@ -187,6 +201,9 @@ button { font: inherit; color: inherit; }
 .panel .label { margin: 0 0 2px; font: 700 .78rem/1.3 var(--font); text-transform: uppercase; letter-spacing: .09em; color: var(--graphite-2); }
 .panel .label.red { color: var(--red); }
 .panel p { margin: 0; }
+.panel .who-box { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding-bottom: 10px; background: var(--i-rule) no-repeat left bottom / 100% 5px; }
+.panel .who-box .label { margin: 0; }
+.panel .who { font: 700 1.3rem/1.2 var(--hand); overflow-wrap: anywhere; min-width: 0; unicode-bidi: isolate; }
 .panel .now { font: 600 1.1rem/1.4 var(--font); }
 .panel .if { padding-left: 12px; background: linear-gradient(var(--red), var(--red)) no-repeat 0 3px / 2px calc(100% - 6px); }
 .panel .outcome { padding: 10px 12px 10px 36px; background: var(--paper-lo) var(--i-zig-red) no-repeat 12px 16px / 16px 9px; border-radius: 3px; }
@@ -199,9 +216,14 @@ button { font: inherit; color: inherit; }
 .book-box .small { padding-bottom: 6px; background: var(--i-under-indigo) no-repeat left bottom / 9.5em 7px; display: inline-block; }
 .panel .book { padding: 2px 0 2px 1.9em; background: repeating-linear-gradient(to bottom, transparent 0 25px, rgba(44, 62, 166, .18) 25px 26px); }
 .panel .book li { color: var(--indigo); font: 500 .92rem/26px var(--mono); }
-.panel .book li::marker { color: rgba(44, 62, 166, .7); }
+.panel .book li::marker { color: rgba(44, 62, 166, .8); }             /* 5.1:1 on the sheet */
+.book-box .note { margin: 2px 0 8px; font-size: .86rem; }
+/* a row Temporal crossed out (reject: issue_refund), struck in its own indigo pencil */
+.panel .book li.struck s { color: rgba(44, 62, 166, .8); text-decoration: line-through 2px rgba(44, 62, 166, .9); }   /* 5.1:1 */
 .panel .history li { font: .82rem/1.45 var(--mono); overflow-wrap: anywhere; margin: 0 0 4px; color: var(--graphite-2); }
 .panel .history li:last-child { color: var(--graphite); font-weight: 600; }
+/* "(nothing is written while it waits for approval)": a note under the step-2 line, not an event (ui.js waitNote) */
+.panel .history li.wait::after { content: attr(data-note); display: block; margin-top: 4px; font: italic 400 .82rem/1.45 var(--font); color: var(--graphite-2); }
 .keys-box { padding-top: 12px; background: var(--i-rule) no-repeat left top / 100% 5px; }
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; align-items: center; font-size: .9rem; }
 .keys dt { justify-self: start; }
@@ -231,21 +253,52 @@ button { font: inherit; color: inherit; }
 .fixes p:first-child { background: var(--i-zig-red) no-repeat 2px .5em / 18px 9px; }
 .fixes .fix { color: var(--graphite-2); background: var(--i-check-green) no-repeat 2px .15em / 18px 18px; }
 #sec-proven > p { padding-left: 30px; margin: 0 0 8px; background: var(--i-check-green) no-repeat 2px .15em / 18px 18px; }
-.foot { margin: 64px 0 8px; padding-top: 18px; color: var(--graphite-2); font-size: .9rem; background: var(--i-rule) no-repeat left top / 100% 5px; }
+.foot { width: 100%; max-width: 1440px; margin: 0 auto; padding: 0 16px 16px; color: var(--graphite-2); font-size: .9rem; }
+.foot-in { margin-top: 48px; padding-top: 18px; background: var(--i-rule) no-repeat left top / 100% 5px; }
 .foot p { margin: 0 0 8px; max-width: 90ch; }
 .foot a { color: var(--graphite); }
 
 /* ---------- layout: 375 / 768 / 1440 ---------- */
-@media (min-width: 640px) {
+/* up to 768 the page keeps the 16 px gutter, so the canvas is full width (GAME_SPEC §2 "Layout") */
+@media (min-width: 769px) {
   .wrap { padding: 28px 24px 20px; }
+  .foot { padding: 0 24px 20px; }
 }
 @media (min-width: 1100px) {
-  .wrap { padding: 32px 32px 24px; }
-  .head { display: flex; align-items: flex-end; gap: 12px 40px; margin-bottom: 22px; }
+  /* the rail (and its crash marks) must fit above the fold at 1440x900: a tighter vertical rhythm here */
+  .wrap { padding: 22px 32px 24px; }
+  .foot { padding: 0 32px 24px; }
+  .controls { margin-top: 12px; }
+  .rail { margin-top: 10px; }
+  .rail .small { margin-bottom: 2px; }
+  .rail .chip { gap: 2px; }
+  .rail .chip-t { line-height: 1.18; }
+  /* the reasons sit beside their buttons, not under them, so the bar keeps one height (the rail does not jump) */
+  .ctl { display: flex; align-items: center; gap: 6px 14px; }
+  .ctl-act { flex-wrap: wrap; }
+  .ctl-act .btns { flex: none; }
+  .ctl-act .why { flex: 1 1 16em; }
+  .ctl-plug { flex-direction: row-reverse; }
+  .ctl-plug .btns { flex: none; }
+  #why-action:empty { margin-top: 0; }
+  .ctl-if { display: none; }                                            /* the panel is beside the canvas */
+  .head { display: flex; align-items: flex-end; gap: 12px 40px; margin-bottom: 14px; }
   .title { flex: none; font-size: 2.4rem; }
-  .lede { margin: 0 0 10px; max-width: 58ch; font-size: 1rem; }
+  /* the lede takes the width beside the title: two lines, not three, so the settings row (#toggles) fits
+     above the fold at 1440x900 in play */
+  .lede { flex: 1 1 auto; margin: 0 0 10px; max-width: 80ch; font-size: 1rem; }
   .game { grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); gap: 28px; }
   .play { margin: 0; }
+  .toggles { margin-top: 6px; padding-top: 6px; }
+  /* the start card as a two-column form (the label and "Remember" on the left, the field, the reason and the
+     privacy note on the right), so the settings row is also in view at 1440x900 */
+  .nameform { margin-top: 14px; gap: 6px 24px; max-width: 900px; grid-template-columns: auto minmax(0, 1fr); align-items: center; }
+  .nameform > .name-label { grid-column: 1; grid-row: 1; }
+  .nameform > .name-row { grid-column: 2; grid-row: 1; max-width: 600px; }
+  .nameform > #name-why { grid-column: 2; grid-row: 2; }
+  .nameform > .check { grid-column: 1; grid-row: 3; }
+  .nameform > #name-privacy { grid-column: 2; grid-row: 3; }
+  #name-why:empty { margin-top: -6px; }
 }
 @media (max-width: 767px) {
   .head { margin-bottom: 16px; }
@@ -273,3 +326,15 @@ button { font: inherit; color: inherit; }
 }
 html[data-reduced="true"] *, html[data-reduced="true"] *::before, html[data-reduced="true"] *::after { transition: none !important; animation: none !important; }
 html[data-reduced="true"] .btn:hover, html[data-reduced="true"] .btn:active { transform: none !important; }
+
+/* ---------- forced colours (Windows High Contrast): the pencil SVGs keep their own colours there, so the
+   boxes, ticks and sheets are replaced by system-colour borders and fills ---------- */
+@media (forced-colors: active) {
+  .btn, .name-row input, .rail .chip-n, .keys kbd { border: 1px solid ButtonText; }
+  .btn.toggle::before { background-image: none; border: 1px solid ButtonText; }
+  .btn.toggle[aria-pressed="true"]::before { background: Highlight; }
+  .btn[aria-disabled="true"], .btn:disabled { border-style: dashed; color: GrayText; }
+  .rail .chip[aria-current] .chip-n { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+  .panel, .card { background-image: none; border: 1px solid CanvasText; }
+  .stage::after { display: none; }
+}

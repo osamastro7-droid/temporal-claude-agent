@@ -5,7 +5,7 @@
 // ?test=1) the backing width is clamp(round(cssW * dpr), 960, 1920).
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
-import { MAP, watch, ready, open, problems, needStory, state, view, advance, sync, startWith, railTo, playToEnd, until } from './helpers.mjs';
+import { MAP, watch, ready, open, problems, state, view, advance, sync, startWith, railTo, playToEnd, until } from './helpers.mjs';
 
 const SIZES = [{ w: 375, h: 812, dpr: 3 }, { w: 768, h: 1024, dpr: 2 }, { w: 1440, h: 900, dpr: 2 }];
 fs.mkdirSync(new URL('./out/shots/', import.meta.url), { recursive: true });
@@ -46,7 +46,6 @@ for (const sz of SIZES) {
     test('checkout, waiting, dark, notes, end card', async ({ page }) => {
       test.setTimeout(180000);
       const w = await open(page);
-      await needStory(page);
       await startWith(page, 'Zoë');
       const shot = async name => { await checkLayout(page, name); await w.screenshot({ path: `out/shots/${sz.w}-${name}.png`, fullPage: true }); };
       // checkout: after Buy, when the name has typed itself and Pay is live
