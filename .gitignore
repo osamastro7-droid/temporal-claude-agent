@@ -9,3 +9,9 @@ __pycache__/
 out/
 spike/REAL_REPORT*.md
 spike/real_results.json
+
+# pencil game browser tests (tests/web)
+tests/web/node_modules/
+tests/web/test-results/
+tests/web/playwright-report/
+tests/web/out/

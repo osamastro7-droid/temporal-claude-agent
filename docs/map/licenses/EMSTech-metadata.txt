@@ -1,0 +1,11 @@
+<metadata>
+
+Font name:               EMS Tech
+License:                 SIL Open Font License http://scripts.sil.org/OFL
+Created by:              Sheldon B. Michaels
+SVG font conversion by:  Windell H. Oskay
+A derivative of:         Architects Daughter
+Designer:                Kimberly Geswein, Kimberly Geswein Fonts
+Link:                    http://www.kimberlygeswein.com/
+Google font page:        https://fonts.google.com/specimen/Architects+Daughter
+</metadata>

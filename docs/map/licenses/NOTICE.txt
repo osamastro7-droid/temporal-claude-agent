@@ -1,0 +1,38 @@
+temporal-claude-agent: the pencil game at docs/map/
+====================================================
+
+Which file is under which licence.
+
+1. Game code and drawings (MIT, Copyright (c) 2026 Osamah Al-Harazi; see LICENSE in the repository root)
+   index.html, map.css, content.js
+   game/*.js
+   film/a1.js, film/a2.js, film/a3.js       (acts of the film "The refund that can't happen twice")
+   engine/kit.js, engine/cast.js, engine/agent.js,
+   engine/stageB.js, engine/stageC.js, engine/stageD.js,
+   engine/logos.js                          (the code; the marks it draws are trademarks, see 4.)
+
+2. Drawing engine (MIT, Copyright (c) 2026 Alexey Fateev; licenses/engine-MIT.txt)
+   engine/core.js     (patched: see the header comment in the file)
+   engine/studio.js   (unmodified)
+   engine/cels.js     (unmodified)
+   From the hand-drawn-canvas-animation skill by alesha-pro
+   (https://github.com/alesha-pro/tools).
+
+3. Font: EMS Tech (SIL Open Font License 1.1; licenses/OFL-1.1-EMSTech.txt)
+   engine/font-emstech.js
+   Copyright (c) 2010, Kimberly Geswein (kimberlygeswein.com).
+   EMS Tech is a single-line derivative of Architects Daughter by Kimberly Geswein; SVG
+   single-line conversion by Sheldon B. Michaels and Windell H. Oskay (Evil Mad Scientist),
+   see licenses/EMSTech-metadata.txt. It was distributed in the hersheytext npm package, whose
+   code is MIT (licenses/hersheytext-MIT.txt, Copyright (c) 2014 James T); that MIT notice is
+   included as a courtesy and does not cover the font.
+   The font stays under the OFL 1.1. It is NOT covered by the repository's MIT licence.
+
+4. Trademarks
+   engine/logos.js holds outlines of the Temporal mark and the Claude spark, drawn in pencil to
+   name the tools this project uses.
+   Temporal and Claude marks belong to Temporal Technologies and Anthropic; this is a community
+   project, not affiliated with or endorsed by either.
+
+No other third-party assets are used: no photos, no web fonts, no audio files. Every sound is
+synthesised in the browser by game/sfx.js.

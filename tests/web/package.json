@@ -1,0 +1,18 @@
+{
+  "name": "temporal-claude-agent-map-tests",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests and dev tools for the pencil game at docs/map (not published; ignored by pytest).",
+  "scripts": {
+    "serve": "node server.mjs",
+    "static": "node static-checks.mjs",
+    "test": "playwright test",
+    "shot": "node shot.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

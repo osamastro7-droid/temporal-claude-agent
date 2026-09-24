@@ -1,0 +1,140 @@
+/* docs/map/map.css: the paper look around the pencil game (GAME_SPEC §2 "map.css", "Layout").
+   System fonts only. Colours are the film's (kit.js COL): paper, graphite, indigo = Temporal,
+   red = crash, green = done once. Breakpoints tested at 375 / 768 / 1440 px. */
+:root {
+  --paper: #f3eee2;
+  --paper-2: #ebe4d3;
+  --graphite: #2f2b27;
+  --graphite-2: #5b544b;   /* secondary text: 6.4:1 on paper */
+  --line: #cfc6b2;
+  --indigo: #2c3ea6;
+  --red: #b42d1a;          /* a touch darker than the film's #c3321d for AA text contrast */
+  --green: #1f7a43;
+  --focus: #2c3ea6;
+  --radius: 10px;
+  --gap: 16px;
+  --font: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--graphite);
+  font: 400 1rem/1.5 var(--font);
+  overflow-x: hidden;
+}
+.wrap { width: 100%; max-width: 1600px; margin: 0 auto; padding: 16px; }
+.head { margin: 4px 0 12px; }
+.title { margin: 0; font-size: clamp(1.35rem, 2.6vw, 2rem); line-height: 1.2; letter-spacing: -.01em; }
+h2, h3 { line-height: 1.25; }
+.small { font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin: 16px 0 6px; color: var(--graphite-2); font-weight: 600; }
+.indigo { color: var(--indigo); }
+.note { color: var(--graphite-2); font-size: .9rem; }
+.why { color: var(--graphite-2); font-size: .9rem; }
+.why:empty, .note:empty { display: none; }
+a { color: var(--indigo); text-underline-offset: 2px; }
+
+/* ---------- the game block: canvas + controls, then rail + panel ---------- */
+.game { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--gap); align-items: start; }
+.play { min-width: 0; max-width: 1200px; width: 100%; margin: 0 auto; }
+.stage { position: relative; width: 100%; aspect-ratio: 16 / 9; background: var(--paper); border-radius: var(--radius); overflow: hidden; box-shadow: 0 1px 0 var(--line), 0 0 0 1px var(--line); }
+.cv { display: block; width: 100%; height: 100%; }
+.hotspots { position: absolute; inset: 0; pointer-events: none; }
+.hot { position: absolute; pointer-events: auto; background: transparent; border: 0; padding: 0; margin: 0; min-width: 0; min-height: 0; cursor: pointer; border-radius: 8px; }
+.hot:hover { box-shadow: 0 0 0 2px rgba(44, 62, 166, .35); }
+
+/* ---------- buttons ---------- */
+button { font: inherit; color: inherit; }
+.controls button, .nameform button, .rail .chip {
+  min-height: 44px; min-width: 44px; padding: 8px 16px; border-radius: 999px;
+  border: 1.5px solid var(--graphite); background: #fbf8f0; color: var(--graphite); cursor: pointer;
+  font-weight: 600; touch-action: manipulation;
+}
+.controls button:hover:not(:disabled):not([aria-disabled="true"]), .nameform button:hover:not(:disabled), .rail .chip:hover { background: #fff; }
+button.primary { background: var(--graphite); color: var(--paper); }
+button.primary:hover:not(:disabled):not([aria-disabled="true"]) { background: #1e1b18; }
+button.plug { border-color: var(--red); color: var(--red); }
+button.plug[aria-pressed="true"] { background: var(--red); color: #fff; }
+button[aria-pressed="true"]:not(.plug) { background: var(--indigo); border-color: var(--indigo); color: #fff; }
+button:disabled, button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }   /* control buttons use aria-disabled so they keep focus (ui.js) */
+:focus { outline: none; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+input:focus-visible { outline-offset: 1px; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; margin-top: 12px; }
+.controls[hidden], .nameform[hidden] { display: none; }
+.ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.toggles { margin-left: auto; }
+
+/* ---------- the name form (start card) ---------- */
+.nameform { margin-top: 12px; display: grid; gap: 8px; max-width: 560px; }
+.nameform label { font-weight: 600; }
+.name-row { display: flex; gap: 10px; }
+.name-row input {
+  flex: 1 1 auto; min-width: 0; min-height: 44px; font: inherit; font-size: max(16px, 1rem);
+  padding: 8px 14px; border: 1.5px solid var(--graphite); border-radius: 10px; background: #fffdf7; color: var(--graphite);
+}
+.check { display: flex; align-items: center; gap: 8px; font-weight: 400 !important; min-height: 44px; }
+.check input { width: 20px; height: 20px; accent-color: var(--indigo); }
+
+/* the caption, repeated for screen readers (the drawn caption is on the canvas) */
+.status { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+/* ---------- the rail ---------- */
+.rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.rail .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-weight: 500; }
+.rail .chip-n { font-weight: 700; }
+.rail .chip-t { font-size: .85rem; color: var(--graphite-2); }
+.rail .chip[aria-current] { background: var(--graphite); color: var(--paper); }
+.rail .chip[aria-current] .chip-t { color: var(--paper); }
+.rail .chip-crash:empty { display: none; }
+.rail .chip-crash { color: var(--red); font-size: .8rem; display: inline-flex; align-items: center; gap: 4px; }
+/* the small red zigzag before "crashed before / after" (a data: image: img-src allows data:) */
+.rail .chip-crash::before { content: ""; width: 14px; height: 8px; flex: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 8'%3E%3Cpath d='M1 6 4 2 7 6 10 2 13 6' fill='none' stroke='%23b42d1a' stroke-width='1.6' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat center / contain; }
+.rail .chip[aria-current] .chip-crash { color: #ffd9d2; }
+
+/* ---------- the panel ---------- */
+.retry { border-collapse: collapse; font-size: .9rem; margin: 4px 0 8px; }
+.retry th, .retry td { text-align: left; padding: 3px 10px 3px 0; border-bottom: 1px solid var(--line); }
+.retry th { font-weight: 600; color: var(--graphite-2); }
+.panel { margin-top: 8px; padding: 14px 16px; border-radius: var(--radius); background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--line); }
+.panel .label { margin: 0; font-weight: 700; }
+.panel p { margin: 2px 0 10px; }
+.panel .now { font-size: 1.05rem; }
+.panel ol { margin: 0; padding-left: 1.4em; }
+.panel .book li { color: var(--indigo); font-family: var(--mono); font-size: .9rem; }
+.panel .history li { font-family: var(--mono); font-size: .85rem; overflow-wrap: anywhere; }
+
+/* ---------- lower sections (GAME_SPEC §5) ---------- */
+.lower { margin-top: 40px; display: grid; gap: 28px; }
+.more h2 { margin: 0 0 8px; font-size: 1.4rem; }
+.more p { max-width: 72ch; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.card { padding: 14px 16px; border-radius: var(--radius); background: #f8f4ea; box-shadow: inset 0 0 0 1px var(--line); }
+.card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.card p { margin: 0; }
+.fixes { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.fixes li { padding: 10px 14px; border-left: 3px solid var(--red); background: #f8f4ea; border-radius: 0 var(--radius) var(--radius) 0; }
+.fixes p { margin: 0; }
+.fixes .fix { color: var(--green); margin-top: 4px; }
+.foot { margin: 48px 0 16px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--graphite-2); font-size: .9rem; }
+
+/* ---------- layout ---------- */
+@media (max-width: 767px) {
+  .wrap { padding: 16px; }
+  .controls { gap: 10px; }
+  .controls button { flex: 1 1 auto; }
+  .toggles { margin-left: 0; width: 100%; }
+  .toggles button { flex: 1 1 0; padding: 8px 10px; }
+  .rail .chip-t { display: none; }
+}
+@media (min-width: 1600px) {
+  .game { grid-template-columns: minmax(0, 1200px) minmax(300px, 1fr); }
+  .play { margin: 0; }
+  .side { position: sticky; top: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
